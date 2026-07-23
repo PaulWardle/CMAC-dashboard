@@ -60,6 +60,7 @@ function Login({ onSignedIn }) {
   const [mode, setMode] = useState("signin"); // signin | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [state, setState] = useState({ status: "idle", msg: "" });
 
   const fail = (msg) => setState({ status: "error", msg });
@@ -114,14 +115,21 @@ function Login({ onSignedIn }) {
 
       <form onSubmit={submit}>
         <label htmlFor="email" style={{ ...labelStyle, marginTop: 0 }}>Work email</label>
-        <input id="email" type="email" autoFocus autoComplete="email" required
+        <input id="email" type="email" autoFocus autoComplete="email" autoCapitalize="none" autoCorrect="off" required
           placeholder={"name@" + ALLOWED_EMAIL_DOMAIN} value={email}
-          onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+          onChange={(e) => setEmail(e.target.value)} style={{ ...inputStyle, fontSize: 16 }} />
 
         <label htmlFor="password" style={labelStyle}>{isReg ? "Choose a password" : "Password"}</label>
-        <input id="password" type="password" autoComplete={isReg ? "new-password" : "current-password"} required
-          placeholder="••••••••" value={password}
-          onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+        <div style={{ position: "relative" }}>
+          <input id="password" type={showPw ? "text" : "password"} autoComplete={isReg ? "new-password" : "current-password"} required
+            placeholder="••••••••" value={password}
+            onChange={(e) => setPassword(e.target.value)} style={{ ...inputStyle, fontSize: 16, paddingRight: 74 }} />
+          <button type="button" onClick={() => setShowPw((v) => !v)}
+            aria-label={showPw ? "Hide password" : "Show password"}
+            style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5C6675", fontWeight: 800, fontSize: 12.5, fontFamily: "inherit", cursor: "pointer", padding: "6px 4px", letterSpacing: ".5px" }}>
+            {showPw ? "HIDE" : "SHOW"}
+          </button>
+        </div>
 
         {state.status === "error" && (
           <div style={{ marginTop: 10, fontSize: 13, color: "#FF6B85", fontWeight: 600, lineHeight: 1.5 }}>{state.msg}</div>

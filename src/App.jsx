@@ -215,7 +215,29 @@ const STYLES = `
 .prog > div { height:100%; background:#112138; border-radius:999px; }
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
-@media (max-width: 900px) { .side { width:64px; min-width:64px; } .side .b2,.ngroup,.nitem span.lbl { display:none; } .side-brand .blogo { width:46px; } .nitem { justify-content:center; } }
+.burger { display:none; }
+@media (max-width: 900px) {
+  .burger { display:inline-flex; align-items:center; justify-content:center; background:#112138; color:#fff; border:none; border-radius:9px; width:40px; height:36px; font-size:18px; cursor:pointer; flex:none; }
+  .side { position:fixed; top:0; left:-300px; bottom:0; width:280px; min-width:280px; z-index:70; transition:left .22s ease; box-shadow:8px 0 30px rgba(17,33,56,.35); }
+  .side.open { left:0; }
+  .scrim { position:fixed; inset:0; background:rgba(17,33,56,.55); z-index:60; }
+  .side-brand .blogo { width:110px; }
+  .nitem { padding:11px 18px; font-size:14px; }
+  .topbar { flex-wrap:wrap; gap:8px; padding:8px 12px; }
+  .topbar .ttl { font-size:14px; }
+  .searchwrap { flex:1 1 100%; order:5; width:100% !important; }
+  .content { padding:12px 12px 64px; }
+  .input, .select, .ta { font-size:16px; }
+  .tbl { display:block; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .grid { grid-template-columns: 1fr !important; }
+  .grid:has(.stat) { grid-template-columns: repeat(2, 1fr) !important; }
+  .kcol { min-width:250px; width:250px; }
+  .kbody { max-height:none; }
+  .modal-bg { padding:12px 8px; }
+  .modal { padding:14px 14px 18px; }
+  .h1 { font-size:16px; }
+}
+@media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
 `;
 
 const Badge = ({ p }) => {
@@ -1874,7 +1896,7 @@ function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   };
   const any = results.items.length + results.projects.length + results.mobs.length > 0;
   return (
-    <div style={{ position: "relative", width: 360 }}>
+    <div className="searchwrap" style={{ position: "relative", width: "min(360px, 100%)" }}>
       <input className="input" placeholder="Search everything, or ask a question…" value={q}
         onChange={(e) => { setQ(e.target.value); setOpenPanel(true); setAi({ busy: false, answer: "" }); }}
         onFocus={() => setOpenPanel(true)}
@@ -1917,6 +1939,7 @@ export default function App({ auth }) {
   const [storageWarn, setStorageWarn] = useState(false);
   const [roNotice, setRoNotice] = useState(false);
   const [pendingReqs, setPendingReqs] = useState(0);
+  const [navOpen, setNavOpen] = useState(false);
   const canEdit = !auth || auth.canEdit;
 
   // Admin: watch for access requests awaiting approval.
@@ -1976,7 +1999,7 @@ export default function App({ auth }) {
 
   const openItem = (w) => setEditItem(w);
   const newItem = (preset) => setEditItem({ ...(typeof preset === "object" && preset ? preset : {}) });
-  const go = (k) => { setNav(k); if (k !== "projects") setProjDetail(null); if (k !== "mobs") setMobDetail(null); };
+  const go = (k) => { setNav(k); setNavOpen(false); if (k !== "projects") setProjDetail(null); if (k !== "mobs") setMobDetail(null); };
   const openProject = (id) => { setProjDetail(id); setNav("projects"); };
   const openMob = (id) => { setMobDetail(id); setNav("mobs"); };
   const saveItem = (w, isNew) => {
@@ -2020,7 +2043,8 @@ export default function App({ auth }) {
   return (
     <div className="occ">
       <style>{STYLES}</style>
-      <aside className="side">
+      {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
+      <aside className={"side" + (navOpen ? " open" : "")}>
         <div className="side-brand">
           <img src="/cmac-logo-white.png" alt="cmac." className="blogo" />
           <div className="b2">Operations Command Centre</div>
@@ -2042,6 +2066,7 @@ export default function App({ auth }) {
       </aside>
       <div className="main">
         <div className="topbar">
+          <button className="burger" onClick={() => setNavOpen(true)} aria-label="Open menu">☰</button>
           <span className="ttl">{(NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
           <SearchBox data={data} openItem={openItem} go={go} setProjDetail={setProjDetail} setMobDetail={setMobDetail} />
           {canEdit && <button className="btn sm pri" onClick={() => newItem()}>+ New</button>}
