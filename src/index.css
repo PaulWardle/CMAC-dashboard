@@ -1,0 +1,11 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: "Montserrat", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  background: #edf1f2;
+  color: #112138;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* Prevent the whole document scrolling on mobile; the app manages its own panes. */
+html, body { overscroll-behavior: none; }

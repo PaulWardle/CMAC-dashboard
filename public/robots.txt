@@ -1,0 +1,3 @@
+# Private internal tool — discourage indexing.
+User-agent: *
+Disallow: /

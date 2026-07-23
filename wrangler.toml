@@ -1,0 +1,12 @@
+name = "cmac-operations-command-centre"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"
+
+# Environment variables are configured in the Cloudflare Pages dashboard
+# (Settings > Environment variables), NOT here, so that secrets never enter
+# source control:
+#   Build-time (public):  VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+#   Runtime (secret):     ANTHROPIC_API_KEY   (and optional AI_MODEL)
+#
+# For local Functions dev (`npm run pages:dev`) put the runtime secrets in
+# a git-ignored .dev.vars file (see .dev.vars.example).

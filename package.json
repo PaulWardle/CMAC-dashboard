@@ -1,0 +1,24 @@
+{
+  "name": "cmac-operations-command-centre",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "CMAC Operations Command Centre — one source of truth for actions, projects, mobilisations and executive reporting.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "pages:dev": "wrangler pages dev dist --compatibility-date=2024-11-01"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "vite": "^5.4.8",
+    "vite-plugin-pwa": "^0.20.5"
+  }
+}
