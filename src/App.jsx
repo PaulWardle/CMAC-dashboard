@@ -434,6 +434,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
           <F label="Workstream"><select className="select" value={w.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Country"><select className="select" value={w.country} onChange={(e) => set("country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label="Horizon (priorities board)"><select className="select" value={w.horizon} onChange={(e) => set("horizon", e.target.value)}>{HORIZONS.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Description" span><textarea className="ta" value={w.description} onChange={(e) => set("description", e.target.value)} /></F>
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
           {(w.status === "Blocked" || w.blocker) && <F label="Blocker / reason" span><input className="input" value={w.blocker} onChange={(e) => set("blocker", e.target.value)} /></F>}
@@ -583,10 +584,10 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const show = (k) => focus === "All" || focus === k;
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <h2 className="h1">Command Centre</h2>
         <span className="sub" style={{ margin: 0 }}>{new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
           {["All", "Today", "This week", "Executive", "Mobilisations", "Projects"].map((f) => (
             <button key={f} className={"btn sm" + (focus === f ? " pri" : "")} onClick={() => setFocus(f)}>{f}</button>))}
         </div>
@@ -872,7 +873,7 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
   };
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Action Board</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={newItem}>+ New work item</button>
       </div>
@@ -995,7 +996,7 @@ function RisksView({ data, openItem, newItem }) {
   const open = rows.filter((w) => OPEN_STATUSES.includes(w.status));
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Risks, Issues and Dependencies</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => newItem({ type: tab })}>+ New {tab.toLowerCase()}</button>
       </div>
@@ -1041,7 +1042,7 @@ function Decisions({ data, openItem, newItem }) {
   const commTargets = [...new Set(data.workItems.filter((w) => w.type === "Commitment").map((w) => w.extra?.madeTo).filter(Boolean))];
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Decisions and Commitments</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => newItem({ type: tab })}>+ New {tab.toLowerCase()}</button>
       </div>
@@ -1223,7 +1224,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
   }
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Projects</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           {["cards", "table"].map((v) => <button key={v} className={"btn sm" + (view === v ? " pri" : "")} onClick={() => setView(v)}>{v === "cards" ? "Cards" : "Table"}</button>)}
@@ -1422,7 +1423,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
   }
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Mobilisations</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => setEditing({})}>+ New mobilisation</button>
       </div>
@@ -1551,7 +1552,7 @@ function Newsletter({ data, mutate }) {
   };
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <h2 className="h1">Newsletter</h2>
         <input className="input" style={{ width: 180 }} value={draft.edition} onChange={(e) => upd((x) => { x.edition = e.target.value; })} />
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={generate} disabled={!draft.approved.length && !draft.articles.length}>Generate & copy draft</button>
@@ -1633,7 +1634,7 @@ function WeeklyReview({ data, mutate, go }) {
   };
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <h2 className="h1">Weekly Review</h2>
         <span className="chip">{doneCount}/{steps.length} steps</span>
         <button className="btn sm" style={{ marginLeft: "auto" }} onClick={async () => { if (await askConfirm("Start a fresh weekly review? Step ticks are cleared.")) upd((x) => { x.steps = {}; x.weekOf = todayISO(); x.topFive = ["", "", "", "", ""]; x.support = ""; }); }}>Start new review</button>
