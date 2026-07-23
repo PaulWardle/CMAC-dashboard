@@ -88,6 +88,65 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
   return JSON.parse(clean.slice(from));
 }
 
+/**
+ * Streaming Claude call for the live assistant. Sends {system, messages,
+ * tools} to /api/ai with stream:true and parses the SSE stream, invoking
+ * onDelta(textSoFar) as tokens arrive. Returns the final assistant content
+ * blocks (text + tool_use) and the stop reason.
+ */
+async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta }) {
+  const res = await fetch("/api/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stream: true, system, messages, tools, max_tokens: maxTokens }),
+  });
+  if (!res.ok || !res.body) {
+    let detail = "";
+    try { detail = (await res.json()).error || ""; } catch (e) {}
+    throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  const content = [];
+  const jsonAcc = {};
+  let stop = null;
+  const textSoFar = () => content.filter((c) => c && c.type === "text").map((c) => c.text).join("");
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      let ev;
+      try { ev = JSON.parse(dataLine.slice(5).trim()); } catch (e) { continue; }
+      if (ev.type === "content_block_start") {
+        const b = ev.content_block || {};
+        content[ev.index] = b.type === "text" ? { type: "text", text: b.text || "" } : { type: "tool_use", id: b.id, name: b.name, input: b.input || {} };
+        jsonAcc[ev.index] = "";
+      } else if (ev.type === "content_block_delta") {
+        const c = content[ev.index];
+        if (!c) continue;
+        if (ev.delta?.type === "text_delta") { c.text += ev.delta.text; if (onDelta) onDelta(textSoFar()); }
+        else if (ev.delta?.type === "input_json_delta") jsonAcc[ev.index] += ev.delta.partial_json || "";
+      } else if (ev.type === "content_block_stop") {
+        const c = content[ev.index];
+        if (c && c.type === "tool_use" && jsonAcc[ev.index]) {
+          try { c.input = JSON.parse(jsonAcc[ev.index]); } catch (e) { c.input = c.input || {}; }
+        }
+      } else if (ev.type === "message_delta") {
+        stop = ev.delta?.stop_reason || stop;
+      } else if (ev.type === "error") {
+        throw new Error(ev.error?.message || "AI stream error");
+      }
+    }
+  }
+  return { content: content.filter(Boolean), stop_reason: stop };
+}
+
 function captureParsePrompt(text, d) {
   const lim = (s, n) => String(s || "").trim().slice(0, n);
   const ctx = d.context || {};
@@ -98,7 +157,8 @@ function captureParsePrompt(text, d) {
     lim(ctx.clients, 2000) && "CLIENTS & TERMINOLOGY:\n" + lim(ctx.clients, 2000),
     lim(ctx.rules, 2500) && "STANDING TRIAGE RULES (apply these when setting priority, flags, workstream and routing):\n" + lim(ctx.rules, 2500),
   ].filter(Boolean).join("\n\n");
-  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON array (no markdown, no preamble). Each element:
+  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON object (no markdown, no preamble): {"records": [array of records as specified below], "questions": [0-3 short clarifying questions, ONLY where something genuinely important is missing or ambiguous — an unknown person behind initials, an urgent item with no date, unclear which project. Empty array if none.]}
+Each record:
 {"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "horizon": one of ["Now","Next","Later"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": exact name from ${JSON.stringify(WORKSTREAMS)} or "", "project": exact name from ${JSON.stringify(d.projects.map((p) => p.name))} or "", "mobilisation": exact name from ${JSON.stringify(d.mobs.map((m) => m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}, "duplicateOf": exact title from the existing-items list below or "", "reasoning": string (one short sentence explaining the triage — priority, routing, flags)}
 
 ${ctxBlock ? ctxBlock + "\n\n" : ""}EXISTING OPEN ITEMS (check new records against these; if one clearly covers the same work, set duplicateOf to its exact title):
@@ -238,6 +298,10 @@ const STYLES = `
 .prog > div { height:100%; background:#112138; border-radius:999px; }
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
+.chat { display:flex; flex-direction:column; gap:8px; }
+.bub { max-width:82%; padding:9px 13px; border-radius:14px; font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:break-word; }
+.bub.user { align-self:flex-end; background:#112138; color:#fff; border-bottom-right-radius:4px; }
+.bub.ai { align-self:flex-start; background:#fff; border:1px solid #E1E7EC; border-bottom-left-radius:4px; }
 .burger { display:none; }
 .tabbar { display:none; }
 @media (max-width: 900px) {
@@ -757,6 +821,9 @@ function Capture({ data, mutate, openItem }) {
   const [files, setFiles] = useState([]);
   const [ingesting, setIngesting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [questions, setQuestions] = useState([]);
+  const [answer, setAnswer] = useState("");
+  const lastInput = useRef("");
   const fileRef = useRef(null);
   const inbox = data.workItems.filter((w) => w.status === "Inbox");
 
@@ -790,11 +857,31 @@ function Capture({ data, mutate, openItem }) {
         else if (f.kind === "pdf") blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data } });
       });
       blocks.push({ type: "text", text: captureParsePrompt(combined, data) });
-      const arr = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 3000);
-      const list = (Array.isArray(arr) ? arr : [arr]).map((p) => ({ ...p, _sel: true, _id: uid() }));
+      lastInput.current = combined;
+      const out = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 3000);
+      const recs = Array.isArray(out) ? out : (out.records || []);
+      const list = recs.map((p) => ({ ...p, _sel: true, _id: uid() }));
       if (!list.length) setErr("Nothing extractable was found in that input.");
       setProposals(list);
+      setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
+      setAnswer("");
     } catch (e) { setErr("Could not parse that just now (" + (e.message || "AI error") + "). You can still add it as a quick note below."); }
+    setBusy(false);
+  };
+
+  const refine = async () => {
+    if (!answer.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      const current = proposals.map(({ _sel, _id, ...rest }) => rest);
+      const prompt = captureParsePrompt(lastInput.current || "(input previously provided)", data) +
+        `\n\nYOU PREVIOUSLY PROPOSED THESE RECORDS:\n${JSON.stringify(current)}\n\nYOU ASKED THE USER:\n${JSON.stringify(questions)}\n\nTHE USER ANSWERS:\n${answer.trim()}\n\nUpdate the records using these answers (adjust owners, dates, priorities, projects; add or remove records only if the answers imply it). Respond ONLY with the same JSON object shape — keep "questions" empty unless something important is still genuinely unresolved.`;
+      const out = await askClaude(prompt, true, 3000);
+      const recs = Array.isArray(out) ? out : (out.records || []);
+      if (recs.length) setProposals(recs.map((p) => ({ ...p, _sel: true, _id: uid() })));
+      setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
+      setAnswer("");
+    } catch (e) { setErr("Could not apply those answers (" + (e.message || "AI error") + ")."); }
     setBusy(false);
   };
   const quickAdd = () => {
@@ -827,7 +914,7 @@ function Capture({ data, mutate, openItem }) {
       return d;
     }, `Approved ${chosen.length} captured item(s)`);
     setProposals((ps) => ps.filter((p) => (only ? p._id !== only : !p._sel)));
-    if (!only) { setText(""); setFiles([]); }
+    if (!only) { setText(""); setFiles([]); setQuestions([]); setAnswer(""); }
   };
   return (
     <div>
@@ -860,7 +947,18 @@ function Capture({ data, mutate, openItem }) {
 
       {proposals.length > 0 && <>
         <div className="h2">Proposed records — review before saving</div>
-        <div className="notebox">These are AI proposals based only on your text. Check owners and dates: anything not stated has been left blank rather than guessed.</div>
+        {questions.length > 0 && (
+          <div className="card" style={{ marginBottom: 8, borderLeft: "4px solid #1D5FBF" }}>
+            <div className="flab">The AI has questions before these are final</div>
+            {questions.map((q, i) => <div key={i} style={{ fontSize: 12.5, padding: "2px 0" }}>• {q}</div>)}
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <input className="input" placeholder="Answer here (one line covers all questions)…" value={answer}
+                onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refine()} />
+              <button className="btn pri sm" disabled={busy || !answer.trim()} onClick={refine}>{busy ? "Updating…" : "Answer & update"}</button>
+            </div>
+            <div className="sub" style={{ margin: "6px 0 0" }}>Or ignore the questions and approve below as-is.</div>
+          </div>)}
+        <div className="notebox">These are AI proposals triaged against your context brief. Check owners and dates: anything not stated has been left blank rather than guessed.</div>
         {proposals.map((p) => (
           <div key={p._id} className="card" style={{ marginBottom: 8, borderLeft: "4px solid #112138" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
@@ -888,7 +986,7 @@ function Capture({ data, mutate, openItem }) {
           </div>))}
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn pri" onClick={() => approve()}>Approve selected ({proposals.filter((p) => p._sel).length})</button>
-          <button className="btn" onClick={() => setProposals([])}>Discard all</button>
+          <button className="btn" onClick={() => { setProposals([]); setQuestions([]); setAnswer(""); }}>Discard all</button>
         </div>
       </>}
 
@@ -2104,10 +2202,205 @@ function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
 }
 
 /* ============================================================
+   Assistant — live conversational Claude over the workspace,
+   with tools to create/update work items (approval-gated or auto).
+   ============================================================ */
+function Assistant({ data, mutate, auth }) {
+  const canEdit = !auth || auth.canEdit;
+  const [msgs, setMsgs] = useState([]);
+  const [live, setLive] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [input, setInput] = useState("");
+  const [autoApply, setAutoApply] = useState(true);
+  const [pending, setPending] = useState(null); // { history, tools:[tool_use…] }
+  const endRef = useRef(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs, live, pending]);
+
+  const TOOLS = [
+    {
+      name: "create_work_item",
+      description: "Create a new work item (action, risk, issue, dependency, decision, commitment or idea) in the tracker.",
+      input_schema: { type: "object", properties: {
+        title: { type: "string" }, description: { type: "string" },
+        type: { type: "string", enum: CORE_TYPES }, owner: { type: "string" }, waitingOn: { type: "string" },
+        due: { type: "string", description: "YYYY-MM-DD" }, priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+        horizon: { type: "string", enum: ["Now", "Next", "Later"] }, project: { type: "string", description: "exact project name" },
+        mobilisation: { type: "string", description: "exact mobilisation name" }, workstream: { type: "string" },
+        country: { type: "string", enum: COUNTRIES }, nextAction: { type: "string" },
+      }, required: ["title"] },
+    },
+    {
+      name: "update_work_item",
+      description: "Update an existing work item, found by its exact title. Only include the fields to change. Use note to append an update to its history.",
+      input_schema: { type: "object", properties: {
+        title: { type: "string", description: "exact existing title" },
+        status: { type: "string", enum: STATUSES }, priority: { type: "string", enum: PRIORITIES },
+        due: { type: "string" }, owner: { type: "string" }, waitingOn: { type: "string" },
+        nextAction: { type: "string" }, nextChase: { type: "string" }, lastChased: { type: "string" },
+        horizon: { type: "string", enum: HORIZONS }, blocker: { type: "string" }, outcome: { type: "string" },
+        note: { type: "string" },
+      }, required: ["title"] },
+    },
+  ];
+
+  const execTool = (tu) => {
+    const a = tu.input || {};
+    if (tu.name === "create_work_item") {
+      if (!a.title) return "Error: a title is required.";
+      let created = "";
+      mutate((d) => {
+        const proj = d.projects.find((x) => x.name === a.project);
+        const mob = d.mobs.find((x) => x.name === a.mobilisation);
+        d.workItems.push({
+          id: uid(), title: a.title, description: a.description || "", type: CORE_TYPES.includes(a.type) ? a.type : "Action",
+          status: a.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(a.priority) ? a.priority : "Medium",
+          owner: a.owner || meName(d), waitingOn: a.waitingOn || "", project: proj ? proj.id : "", mob: mob ? mob.id : "",
+          workstream: a.workstream || "", country: COUNTRIES.includes(a.country) ? a.country : d.settings.defaultCountry,
+          client: "", due: a.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
+          rag: "", nextAction: a.nextAction || "", blocker: "", horizon: HORIZONS.includes(a.horizon) ? a.horizon : "Next", rank: 50,
+          flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "General internal",
+          notes: [{ ts: todayISO(), text: "Created by the assistant on the user's instruction" }], extra: {}, outcome: "",
+        });
+        created = a.title;
+        return d;
+      }, "Assistant created: " + a.title);
+      return created ? "Created work item: " + created : "Error: could not create the item.";
+    }
+    if (tu.name === "update_work_item") {
+      let result = "Error: no item titled \"" + (a.title || "") + "\" found.";
+      mutate((d) => {
+        const w = d.workItems.find((x) => x.title === a.title) ||
+                  d.workItems.find((x) => x.title.toLowerCase() === String(a.title || "").toLowerCase());
+        if (!w) return d;
+        const changed = [];
+        [["status", STATUSES], ["priority", PRIORITIES], ["horizon", HORIZONS]].forEach(([k, allowed]) => {
+          if (a[k] && allowed.includes(a[k]) && w[k] !== a[k]) { w[k] = a[k]; changed.push(k + " → " + a[k]); }
+        });
+        ["due", "owner", "waitingOn", "nextAction", "nextChase", "lastChased", "blocker", "outcome"].forEach((k) => {
+          if (a[k] !== undefined && a[k] !== "" && w[k] !== a[k]) { w[k] = a[k]; changed.push(k + " → " + a[k]); }
+        });
+        if (a.note) { w.notes = [...(w.notes || []), { ts: todayISO(), text: a.note }]; changed.push("note added"); }
+        if (w.status === "Done" && !w.completed) w.completed = todayISO();
+        w.updatedAt = todayISO();
+        result = changed.length ? "Updated \"" + w.title + "\": " + changed.join(", ") : "No changes applied to \"" + w.title + "\".";
+        return d;
+      }, "Assistant updated: " + a.title);
+      return result;
+    }
+    return "Error: unknown tool.";
+  };
+
+  const systemPrompt = () =>
+    `You are the embedded assistant inside the CMAC Operations Command Centre, working for ${meName(data)} (${auth?.isAdmin ? "administrator" : canEdit ? "editor" : "view-only user"}). Today is ${fmtD(todayISO())} (${todayISO()}). Be concise, practical and direct; UK date format; plain prose (no markdown headers).
+${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
+Ground every answer ONLY in the workspace data below plus the conversation. If something isn't tracked, say so plainly. Label inferences as observations.
+WORKSPACE:
+${serialiseForAI(data)}`;
+
+  const runRounds = async (history) => {
+    let rounds = 0;
+    while (rounds++ < 6) {
+      const r = await streamClaude({ system: systemPrompt(), messages: history, tools: canEdit ? TOOLS : undefined, onDelta: setLive });
+      const asst = { role: "assistant", content: r.content };
+      history = [...history, asst];
+      setMsgs(history); setLive("");
+      const tus = r.content.filter((c) => c.type === "tool_use");
+      if (r.stop_reason !== "tool_use" || !tus.length) break;
+      if (!autoApply) { setPending({ history, tools: tus }); return; }
+      const results = tus.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: execTool(tu) }));
+      history = [...history, { role: "user", content: results }];
+      setMsgs(history);
+    }
+  };
+
+  const send = async (textIn) => {
+    const t = (textIn ?? input).trim();
+    if (!t || busy || pending) return;
+    const history = [...msgs, { role: "user", content: t }];
+    setMsgs(history); setInput(""); setBusy(true); setLive("");
+    try { await runRounds(history); }
+    catch (e) { setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + (e.message || "The AI service could not be reached.") }] }]); setLive(""); }
+    setBusy(false);
+  };
+
+  const resolvePending = async (approve) => {
+    if (!pending) return;
+    const { history, tools } = pending;
+    setPending(null); setBusy(true);
+    try {
+      const results = tools.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: approve ? execTool(tu) : "User declined this action." }));
+      await runRounds([...history, { role: "user", content: results }]);
+    } catch (e) { setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + (e.message || "AI error") }] }]); }
+    setBusy(false);
+  };
+
+  const describeTool = (tu) => tu.name === "create_work_item"
+    ? "Create item: " + (tu.input?.title || "…") + (tu.input?.due ? " (due " + fmtD(tu.input.due) + ")" : "")
+    : "Update \"" + (tu.input?.title || "…") + "\" — " + Object.keys(tu.input || {}).filter((k) => k !== "title").join(", ");
+
+  const renderMsg = (m, i) => {
+    if (m.role === "user") {
+      if (Array.isArray(m.content)) return <div key={i} className="sub" style={{ textAlign: "right", margin: "0 0 2px" }}>✓ actioned</div>;
+      return <div key={i} className="bub user">{m.content}</div>;
+    }
+    const text = (m.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+    const tools = (m.content || []).filter((c) => c.type === "tool_use");
+    return (
+      <React.Fragment key={i}>
+        {text && <div className="bub ai">{text}</div>}
+        {tools.map((tu, j) => <div key={j} className="bub ai" style={{ fontSize: 11.5, color: "#5C6675" }}>⚙ {describeTool(tu)}</div>)}
+      </React.Fragment>
+    );
+  };
+
+  const starters = canEdit
+    ? ["What needs my attention today?", "What am I waiting on from others?", "Summarise every RED project and mobilisation", "Log a chase to follow up tomorrow"]
+    : ["What needs attention today?", "Summarise the project portfolio", "What go-lives are coming up?"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100dvh - 200px)", minHeight: 360, maxWidth: 860 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <h2 className="h1">Assistant</h2>
+        {canEdit && <label style={{ fontSize: 11.5, display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", color: "#5C6675", fontWeight: 700 }}>
+          <input type="checkbox" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} />
+          Apply changes without asking
+        </label>}
+      </div>
+      <p className="sub">Live Claude over your workspace — ask anything, or tell it to log, chase, update and close items{canEdit ? "" : " (view-only: it can answer but not change things)"}. Conversations reset when you leave this screen.</p>
+      <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+        {!msgs.length && !live && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {starters.map((s) => <button key={s} className="btn sm" onClick={() => send(s)}>{s}</button>)}
+          </div>)}
+        {msgs.map(renderMsg)}
+        {live && <div className="bub ai">{live}<span style={{ opacity: .5 }}>▍</span></div>}
+        {busy && !live && <div className="bub ai" style={{ color: "#8A93A1" }}>Thinking…</div>}
+        {pending && (
+          <div className="card" style={{ borderLeft: "4px solid #FD0E33" }}>
+            <div className="flab">The assistant wants to make {pending.tools.length} change{pending.tools.length > 1 ? "s" : ""}:</div>
+            {pending.tools.map((tu, j) => <div key={j} style={{ fontSize: 12.5, padding: "3px 0" }}>⚙ {describeTool(tu)}</div>)}
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button className="btn sm pri" onClick={() => resolvePending(true)}>Approve & apply</button>
+              <button className="btn sm" onClick={() => resolvePending(false)}>Decline</button>
+            </div>
+          </div>)}
+        <div ref={endRef} />
+      </div>
+      <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: "1px solid #E1E7EC" }}>
+        <input className="input" style={{ flex: 1 }} placeholder="Ask, or tell it what to do…" value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+        <button className="btn pri" disabled={busy || !!pending || !input.trim()} onClick={() => send()}>Send</button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    App shell
    ============================================================ */
 const NAV = [
-  ["Daily working", [["command", "Command Centre"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
+  ["Daily working", [["command", "Command Centre"], ["assistant", "Assistant"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
   ["Delivery", [["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
   ["Reporting", [["board", "Board Pack"], ["coo", "COO Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
@@ -2261,6 +2554,7 @@ export default function App({ auth }) {
   const view = (() => {
     switch (nav) {
       case "command": return <CommandCentre data={data} mutate={mutate} openItem={openItem} go={go} openProject={openProject} openMob={openMob} />;
+      case "assistant": return <Assistant data={data} mutate={mutate} auth={auth} />;
       case "capture": return <Capture data={data} mutate={mutate} openItem={openItem} />;
       case "priorities": return <Priorities data={data} mutate={mutate} openItem={openItem} />;
       case "actions": return <ActionBoard data={data} mutate={mutate} openItem={openItem} newItem={newItem} />;
@@ -2328,7 +2622,7 @@ export default function App({ auth }) {
         </div>
       </div>
       <nav className="tabbar">
-        {[["command", "⌂", "Home"], ["capture", "＋", "Capture"], ["priorities", "◎", "Priorities"], ["waiting", "⏳", "Waiting"]].map(([k, icon, label]) => (
+        {[["command", "⌂", "Home"], ["assistant", "✦", "Assistant"], ["capture", "＋", "Capture"], ["waiting", "⏳", "Waiting"]].map(([k, icon, label]) => (
           <button key={k} className={nav === k ? "on" : ""} onClick={() => go(k)}>
             {k === "command" && alertCount > 0 && <span className="tdot" />}
             <span className="ticon">{icon}</span>{label}

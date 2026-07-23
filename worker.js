@@ -35,6 +35,14 @@ async function handleAI(request, env) {
 
   const model = env.AI_MODEL || "claude-sonnet-5";
 
+  // Forward only known-safe fields. `system` and `tools` power the in-app
+  // assistant; `stream` turns on live token streaming (SSE passthrough).
+  const payload = { model, max_tokens: maxTokens, messages };
+  if (body.system) payload.system = String(body.system).slice(0, 60000);
+  if (Array.isArray(body.tools) && body.tools.length) payload.tools = body.tools.slice(0, 8);
+  if (body.tool_choice) payload.tool_choice = body.tool_choice;
+  if (body.stream) payload.stream = true;
+
   try {
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -43,8 +51,15 @@ async function handleAI(request, env) {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
+      body: JSON.stringify(payload),
     });
+    if (payload.stream && upstream.ok && upstream.body) {
+      // Stream Anthropic's SSE straight through to the browser.
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      });
+    }
     // Pass Anthropic's response straight through so the client reads the
     // standard { content: [...] } shape (and surfaces upstream errors).
     const data = await upstream.text();

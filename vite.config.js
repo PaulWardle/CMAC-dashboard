@@ -34,11 +34,28 @@ function devAiProxy(env) {
             if (!apiKey) return send(503, { error: "ANTHROPIC_API_KEY is not set in your local environment (.env)." });
             if (!Array.isArray(messages) || !messages.length) return send(400, { error: "messages are required" });
             const model = process.env.AI_MODEL || env.AI_MODEL || "claude-sonnet-5";
+            const payload = { model, max_tokens: maxTokens, messages };
+            if (parsed.system) payload.system = String(parsed.system).slice(0, 60000);
+            if (Array.isArray(parsed.tools) && parsed.tools.length) payload.tools = parsed.tools.slice(0, 8);
+            if (parsed.tool_choice) payload.tool_choice = parsed.tool_choice;
+            if (parsed.stream) payload.stream = true;
             const r = await fetch("https://api.anthropic.com/v1/messages", {
               method: "POST",
               headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-              body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
+              body: JSON.stringify(payload),
             });
+            if (payload.stream && r.ok && r.body) {
+              res.statusCode = r.status;
+              res.setHeader("Content-Type", "text/event-stream");
+              res.setHeader("Cache-Control", "no-cache");
+              const reader = r.body.getReader();
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(Buffer.from(value));
+              }
+              return res.end();
+            }
             send(r.status, await r.text());
           } catch (e) {
             send(500, { error: String((e && e.message) || e) });
