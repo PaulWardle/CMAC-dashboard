@@ -147,6 +147,17 @@ async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta
   return { content: content.filter(Boolean), stop_reason: stop };
 }
 
+/* Append AI-learned notes to the standing context, skipping near-duplicates. */
+function appendLearned(d, notes) {
+  const existing = ((d.context || {}).learned || "");
+  const add = (Array.isArray(notes) ? notes : [notes]).map((s) => String(s || "").trim()).filter(Boolean)
+    .filter((s) => !existing.toLowerCase().includes(s.toLowerCase().slice(0, 60)));
+  if (!add.length) return d;
+  const stamped = add.map((s) => "• " + s + "  (" + fmtD(todayISO()) + ")");
+  d.context = { ...(d.context || {}), learned: [existing.trim(), ...stamped].filter(Boolean).join("\n").slice(0, 12000) };
+  return d;
+}
+
 function captureParsePrompt(text, d) {
   const lim = (s, n) => String(s || "").trim().slice(0, n);
   const ctx = d.context || {};
@@ -156,8 +167,9 @@ function captureParsePrompt(text, d) {
     lim(ctx.people, 2500) && "PEOPLE & ROLES (use for owners/waiting-on):\n" + lim(ctx.people, 2500),
     lim(ctx.clients, 2000) && "CLIENTS & TERMINOLOGY:\n" + lim(ctx.clients, 2000),
     lim(ctx.rules, 2500) && "STANDING TRIAGE RULES (apply these when setting priority, flags, workstream and routing):\n" + lim(ctx.rules, 2500),
+    lim(ctx.learned, 2500) && "NOTES PREVIOUSLY LEARNED (from earlier captures and conversations — treat as part of the brief):\n" + lim(ctx.learned, 2500),
   ].filter(Boolean).join("\n\n");
-  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON object (no markdown, no preamble): {"records": [array of records as specified below], "questions": [0-3 short clarifying questions, ONLY where something genuinely important is missing or ambiguous — an unknown person behind initials, an urgent item with no date, unclear which project. Empty array if none.]}
+  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON object (no markdown, no preamble): {"records": [array of records as specified below], "questions": [0-3 short clarifying questions, ONLY where something genuinely important is missing or ambiguous — an unknown person behind initials, an urgent item with no date, unclear which project. Empty array if none.], "learnings": [0-4 short notes worth remembering permanently — ONLY genuinely new lasting facts this input reveals: a person and their role, a client fact, an abbreviation, a standing preference. Never repeat anything already in the context brief. Empty array if nothing new.]}
 Each record:
 {"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "horizon": one of ["Now","Next","Later"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": exact name from ${JSON.stringify(WORKSTREAMS)} or "", "project": exact name from ${JSON.stringify(d.projects.map((p) => p.name))} or "", "mobilisation": exact name from ${JSON.stringify(d.mobs.map((m) => m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}, "duplicateOf": exact title from the existing-items list below or "", "reasoning": string (one short sentence explaining the triage — priority, routing, flags)}
 
@@ -174,7 +186,7 @@ function seedData() {
   return {
     v: 1, workItems: [], projects: [], mobs: [], updates: [], benefits: [], lessons: [], meetings: [],
     stakeholderNotes: {}, dismissedAlerts: [],
-    context: { org: "", people: "", clients: "", rules: "" },
+    context: { org: "", people: "", clients: "", rules: "", learned: "" },
     boardDraft: { period: monthName(), deadline: "", meetingDate: "", commentary: {}, excluded: [], overrides: {}, complete: [] },
     cooDraft: { period: "Week of " + fmtD(todayISO()), commentary: {}, excluded: [], overrides: {} },
     newsDraft: { edition: monthName(), approved: [], rejected: [], headlines: {}, articles: [] },
@@ -833,6 +845,7 @@ function Capture({ data, mutate, openItem }) {
   const [dragOver, setDragOver] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [answer, setAnswer] = useState("");
+  const [learnings, setLearnings] = useState([]);
   const lastInput = useRef("");
   const fileRef = useRef(null);
   const inbox = data.workItems.filter((w) => w.status === "Inbox");
@@ -874,6 +887,7 @@ function Capture({ data, mutate, openItem }) {
       if (!list.length) setErr("Nothing extractable was found in that input.");
       setProposals(list);
       setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
+      setLearnings(Array.isArray(out) ? [] : (out.learnings || []).slice(0, 4));
       setAnswer("");
     } catch (e) { setErr("Could not parse that just now (" + (e.message || "AI error") + "). You can still add it as a quick note below."); }
     setBusy(false);
@@ -890,6 +904,8 @@ function Capture({ data, mutate, openItem }) {
       const recs = Array.isArray(out) ? out : (out.records || []);
       if (recs.length) setProposals(recs.map((p) => ({ ...p, _sel: true, _id: uid() })));
       setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
+      const learned = Array.isArray(out) ? [] : (out.learnings || []).slice(0, 4);
+      if (learned.length) setLearnings((ls) => [...new Set([...ls, ...learned])].slice(0, 6));
       setAnswer("");
     } catch (e) { setErr("Could not apply those answers (" + (e.message || "AI error") + ")."); }
     setBusy(false);
@@ -921,10 +937,11 @@ function Capture({ data, mutate, openItem }) {
           notes: [{ ts: todayISO(), text: "Created from capture (AI-proposed, user-approved)" + (p.reasoning ? " — " + p.reasoning : "") + (p.duplicateOf ? " · Possible duplicate of: " + p.duplicateOf : "") }],
           extra: {}, outcome: "" });
       });
+      if (!only && learnings.length) appendLearned(d, learnings);
       return d;
-    }, `Approved ${chosen.length} captured item(s)`);
+    }, `Approved ${chosen.length} captured item(s)` + (!only && learnings.length ? ` · learned ${learnings.length} context note(s)` : ""));
     setProposals((ps) => ps.filter((p) => (only ? p._id !== only : !p._sel)));
-    if (!only) { setText(""); setFiles([]); setQuestions([]); setAnswer(""); }
+    if (!only) { setText(""); setFiles([]); setQuestions([]); setAnswer(""); setLearnings([]); }
   };
   return (
     <div>
@@ -967,6 +984,15 @@ function Capture({ data, mutate, openItem }) {
               <button className="btn pri sm" disabled={busy || !answer.trim()} onClick={refine}>{busy ? "Updating…" : "Answer & update"}</button>
             </div>
             <div className="sub" style={{ margin: "6px 0 0" }}>Or ignore the questions and approve below as-is.</div>
+          </div>)}
+        {learnings.length > 0 && (
+          <div className="card" style={{ marginBottom: 8, borderLeft: "4px solid #2E7D32" }}>
+            <div className="flab">New context it will remember when you approve (saved to Settings → AI context)</div>
+            {learnings.map((l, i) => (
+              <div key={i} style={{ fontSize: 12.5, padding: "2px 0", display: "flex", gap: 8, alignItems: "baseline" }}>
+                <span style={{ flex: 1 }}>• {l}</span>
+                <span className="linkish" onClick={() => setLearnings((ls) => ls.filter((_, j) => j !== i))}>don't keep</span>
+              </div>))}
           </div>)}
         <div className="notebox">These are AI proposals triaged against your context brief. Check owners and dates: anything not stated has been left blank rather than guessed.</div>
         {proposals.map((p) => (
@@ -2057,6 +2083,7 @@ function ContextPanel({ data, mutate }) {
     ["people", "People & roles", "Names, roles and areas — so the AI assigns the right owners and knows who 'waiting on' means…"],
     ["clients", "Clients & terminology", "Key clients, systems and abbreviations (e.g. Minicabit, Ops Portal, T&Q)…"],
     ["rules", "Standing triage rules", "e.g. \"Anything safety-related → Critical + board flag\" · \"Minicabit items → High, Minicabit performance workstream\" · \"Recruitment items belong to HR, never me\"…"],
+    ["learned", "Learned by the AI & anything else (AOB)", "The assistant and capture add notes here automatically as they learn — new people, clients, terms, rules. Edit or delete anything; whatever you type here is briefed to the AI too…"],
   ];
   return (
     <>
@@ -2068,7 +2095,7 @@ function ContextPanel({ data, mutate }) {
         {fields.map(([k, l, ph]) => (
           <div key={k} style={{ marginBottom: 8 }}>
             <label className="flab">{l}</label>
-            <textarea className="ta" rows={3} placeholder={ph} value={c[k] || ""} onChange={(e) => set(k, e.target.value)} />
+            <textarea className="ta" rows={k === "learned" ? 5 : 3} placeholder={ph} value={c[k] || ""} onChange={(e) => set(k, e.target.value)} />
           </div>))}
       </div>
     </>
@@ -2162,7 +2189,7 @@ function serialiseForAI(data) {
   const projects = data.projects.map((p) => ({ name: p.name, stage: p.stage, rag: p.rag, progress: p.progress, owner: p.owner, target: p.target, position: lim(p.position, 140) }));
   const mobs = data.mobs.map((m) => ({ name: m.name, stage: m.stage, rag: m.rag, goLive: m.goLive, readiness: mobReadiness(m).pct + "%" }));
   const ctx = data.context || {};
-  const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules].filter(Boolean).join("\n"), 3000) || undefined;
+  const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules, ctx.learned].filter(Boolean).join("\n"), 4000) || undefined;
   return JSON.stringify({ today: todayISO(), context, items, projects, mobs }).slice(0, 16000);
 }
 function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
@@ -2250,6 +2277,13 @@ function Assistant({ data, mutate, auth }) {
         note: { type: "string" },
       }, required: ["title"] },
     },
+    {
+      name: "remember_context",
+      description: "Save a short lasting note to the standing AI context brief (a person and their role, a client fact, an abbreviation, a preference or standing rule). Use when you learn something durable that future captures and conversations should know — especially when the user corrects you or says 'remember this'. Not for one-off tasks: those are work items.",
+      input_schema: { type: "object", properties: {
+        note: { type: "string", description: "one concise sentence" },
+      }, required: ["note"] },
+    },
   ];
 
   const execTool = (tu) => {
@@ -2296,12 +2330,18 @@ function Assistant({ data, mutate, auth }) {
       }, "Assistant updated: " + a.title);
       return result;
     }
+    if (tu.name === "remember_context") {
+      const note = String(a.note || "").trim();
+      if (!note) return "Error: a note is required.";
+      mutate((d) => appendLearned(d, note), "Assistant learned: " + note.slice(0, 80));
+      return "Saved to the standing context brief: " + note;
+    }
     return "Error: unknown tool.";
   };
 
   const systemPrompt = () =>
     `You are the embedded assistant inside the CMAC Operations Command Centre, working for ${meName(data)} (${auth?.isAdmin ? "administrator" : canEdit ? "editor" : "view-only user"}). Today is ${fmtD(todayISO())} (${todayISO()}). Be concise, practical and direct; UK date format; plain prose (no markdown headers).
-${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
+${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did. When you learn a durable fact — a person's role, a client, an abbreviation, a standing preference, or the user corrects you on something lasting — save one concise note with remember_context so future captures and conversations know it. Don't save one-off task details that way." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
 Ground every answer ONLY in the workspace data below plus the conversation. If something isn't tracked, say so plainly. Label inferences as observations.
 WORKSPACE:
 ${serialiseForAI(data)}`;
@@ -2345,6 +2385,8 @@ ${serialiseForAI(data)}`;
 
   const describeTool = (tu) => tu.name === "create_work_item"
     ? "Create item: " + (tu.input?.title || "…") + (tu.input?.due ? " (due " + fmtD(tu.input.due) + ")" : "")
+    : tu.name === "remember_context"
+    ? "Remember: " + (tu.input?.note || "…")
     : "Update \"" + (tu.input?.title || "…") + "\" — " + Object.keys(tu.input || {}).filter((k) => k !== "title").join(", ");
 
   const renderMsg = (m, i) => {
@@ -2428,25 +2470,33 @@ ${serialiseForAI(data)}`;
    stays pin-sharp at any size. Shared by the floating button and the
    Assistant screen. `size` is the rendered height in px. */
 function ClipMark({ size = 68 }) {
-  const wire = "M33 52 V108 a17 17 0 0 0 34 0 V48 a10.5 13.5 0 0 0 -21 0 V100 a8 8 0 0 0 16 0 V84";
-  const tube = [["#6e6a99", 8], ["#8a86b2", 6.6], ["#a5a1c8", 5], ["#c2bee2", 3.2]];
+  const wire = "M30 58 V138 a22 22 0 0 0 44 0 V44 a15 15 0 0 0 -30 0 V126 a7 7 0 0 0 14 0 V58";
   return (
-    <svg width={Math.round(size * 70 / 111)} height={size} viewBox="10 24 70 111" aria-hidden="true">
+    <svg width={size / 2} height={size} viewBox="0 0 100 200" aria-hidden="true">
       <defs>
-        <radialGradient id="cm-eye" cx="0.4" cy="0.32" r="0.85">
+        <linearGradient id="cm-metal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#d6dbee" />
+          <stop offset="0.45" stopColor="#a6adcc" />
+          <stop offset="0.75" stopColor="#8890b4" />
+          <stop offset="1" stopColor="#b3bad8" />
+        </linearGradient>
+        <radialGradient id="cm-eye" cx="0.35" cy="0.3" r="0.9">
           <stop offset="0" stopColor="#ffffff" />
-          <stop offset="0.75" stopColor="#f7f7fb" />
-          <stop offset="1" stopColor="#d2d2e0" />
+          <stop offset="0.7" stopColor="#f2f4fa" />
+          <stop offset="1" stopColor="#c9cfe2" />
         </radialGradient>
       </defs>
-      {tube.map(([c, w]) => <path key={c} d={wire} fill="none" stroke={c} strokeWidth={w} strokeLinecap="round" />)}
-      <path d={wire} fill="none" stroke="#dcdaf0" strokeWidth="1.3" strokeLinecap="round" transform="translate(-0.5,-0.7)" />
-      <ellipse cx="57" cy="69" rx="14" ry="15" fill="url(#cm-eye)" />
-      <ellipse cx="54" cy="75" rx="6.6" ry="7.2" fill="#0c0c14" />
-      <ellipse cx="30" cy="56" rx="14" ry="15" fill="url(#cm-eye)" />
-      <ellipse cx="27" cy="62" rx="6.6" ry="7.2" fill="#0c0c14" />
-      <path d="M14 44 C20 33, 34 31, 43 37 C34 35, 21 37, 14 44 Z" fill="#101018" />
-      <path d="M50 44 C56 33, 70 32, 78 42 C69 37, 57 38, 50 44 Z" fill="#101018" />
+      <path d={wire} fill="none" stroke="#303a58" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={wire} fill="none" stroke="url(#cm-metal)" strokeWidth="6.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={wire} fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" transform="translate(-1.1,-1.2)" />
+      <ellipse cx="56" cy="62" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
+      <ellipse cx="52.5" cy="65" rx="6.4" ry="6.9" fill="#101423" />
+      <circle cx="50.2" cy="62.2" r="1.7" fill="#fff" opacity=".9" />
+      <ellipse cx="33" cy="50" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
+      <ellipse cx="29.5" cy="53" rx="6.4" ry="6.9" fill="#101423" />
+      <circle cx="27.2" cy="50.2" r="1.7" fill="#fff" opacity=".9" />
+      <path d="M20 33 q7 -6 17 -3" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
+      <path d="M48 45 q9 -6 17 0" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -2509,7 +2559,7 @@ export default function App({ auth }) {
       // signed-in user's display name and migrate any legacy "Me" owners.
       const displayName = auth && auth.mode === "cloud" ? emailToName(auth.email) : "Me";
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
-      if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "" }; dirty = true; }
+      if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
       }
