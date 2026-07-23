@@ -138,7 +138,6 @@ src/
   lib/store.js             persistence adapter (Supabase ⇄ localStorage)
 supabase/migrations/       database schema
 vite.config.js             Vite + PWA + dev AI proxy
-wrangler.toml              Cloudflare Pages config
 ```
 
 ## Scripts
