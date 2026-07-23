@@ -1810,6 +1810,8 @@ export default function App({ auth }) {
   const [ask, setAsk] = useState(null);
   const askResolver = useRef(null);
   const [storageWarn, setStorageWarn] = useState(false);
+  const [roNotice, setRoNotice] = useState(false);
+  const canEdit = !auth || auth.canEdit;
   const saveTimer = useRef(null);
   const dataRef = useRef(null);
   dataRef.current = data;
@@ -1818,8 +1820,8 @@ export default function App({ auth }) {
     (async () => {
       let d = null;
       try { d = await store.load(); } catch (e) { }
-      if (!d) { d = seedData(); if (store.available) { const ok = await store.save(d); if (!ok) setStorageWarn(true); } else setStorageWarn(true); }
-      else { const s = stripDemo(d); if (s.changed) { d = s.data; if (store.available) await store.save(d); } }
+      if (!d) { d = seedData(); if (canEdit) { const ok = await store.save(d); if (!ok) setStorageWarn(true); } }
+      else { const s = stripDemo(d); if (s.changed) { d = s.data; if (canEdit) await store.save(d); } }
       setData(d);
     })();
   }, []);
@@ -1841,13 +1843,16 @@ export default function App({ auth }) {
   }, []);
 
   const mutate = useCallback((fn, activityText) => {
+    // View-only accounts: the database rejects their writes anyway (RLS);
+    // block here too so the UI doesn't drift from the stored truth.
+    if (!canEdit) { setRoNotice(true); return; }
     setData((d) => {
       const nd = fn(JSON.parse(JSON.stringify(d)));
       if (activityText) nd.activity = [...(nd.activity || []).slice(-199), { ts: Date.now(), text: activityText }];
       return nd;
     });
     persist();
-  }, [persist]);
+  }, [persist, canEdit]);
 
   if (!data) return (
     <div className="occ" style={{ alignItems: "center", justifyContent: "center" }}>
@@ -1924,7 +1929,8 @@ export default function App({ auth }) {
         <div className="topbar">
           <span className="ttl">{(NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
           <SearchBox data={data} openItem={openItem} go={go} setProjDetail={setProjDetail} setMobDetail={setMobDetail} />
-          <button className="btn sm pri" onClick={() => newItem()}>+ New</button>
+          {canEdit && <button className="btn sm pri" onClick={() => newItem()}>+ New</button>}
+          {!canEdit && <span className="chip" title="Only the administrator can make changes">View only</span>}
           {auth && (auth.mode === "local"
             ? <span className="saved" title="No cloud configured — data is stored on this device only">Local mode</span>
             : <span className="saved" style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1935,6 +1941,7 @@ export default function App({ auth }) {
         </div>
         <div className="content">
           {storageWarn && <div className="warnbox">Persistent storage isn't available right now. Your changes may be lost when you leave — use Settings → Export to take a JSON backup.</div>}
+          {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Only the administrator (paul.wardle@cmacgroup.com) can make changes. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
           {view}
         </div>
       </div>

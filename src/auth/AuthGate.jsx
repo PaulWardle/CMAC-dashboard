@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { isConfigured, getSession, onAuthChange, signInWithEmail, signOut } from "../lib/auth";
+import { ALLOWED_EMAIL_DOMAIN, isAllowedEmail, isAdminEmail } from "../lib/config";
 import App from "../App";
 
 /* Brand palette — from the CMAC brand guidelines */
@@ -45,6 +46,10 @@ function Login() {
   const submit = async (e) => {
     e.preventDefault();
     if (!email.trim()) return;
+    if (!isAllowedEmail(email)) {
+      setState({ status: "error", msg: "Please use your @" + ALLOWED_EMAIL_DOMAIN + " email address." });
+      return;
+    }
     setState({ status: "sending", msg: "" });
     try {
       const { error } = await signInWithEmail(email);
@@ -122,7 +127,7 @@ function Login() {
             autoFocus
             autoComplete="email"
             required
-            placeholder="name@example.com"
+            placeholder={"name@" + ALLOWED_EMAIL_DOMAIN}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             style={input}
@@ -160,9 +165,14 @@ export default function AuthGate() {
   if (state.loading) return <Splash text="Starting your command centre…" />;
   if (isConfigured && !state.session) return <Login />;
 
+  const mode = state.session?.mode || (isConfigured ? "cloud" : "local");
+  const email = state.session?.user?.email || (isConfigured ? "" : "Local device");
   const auth = {
-    mode: state.session?.mode || (isConfigured ? "cloud" : "local"),
-    email: state.session?.user?.email || (isConfigured ? "" : "Local device"),
+    mode,
+    email,
+    // Local mode is single-user, full control. In cloud mode only the
+    // administrator account(s) can edit; RLS enforces this server-side too.
+    canEdit: mode === "local" || isAdminEmail(email),
     signOut,
   };
 
