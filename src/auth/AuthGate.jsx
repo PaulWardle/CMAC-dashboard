@@ -2,12 +2,10 @@ import React, { useEffect, useState } from "react";
 import { isConfigured, getSession, onAuthChange, signInWithEmail, signOut } from "../lib/auth";
 import App from "../App";
 
+/* Brand palette — from the CMAC brand guidelines */
 const NAVY = "#112138";
 const RED = "#FD0E33";
-
-function Wordmark({ size = 46 }) {
-  return <img src="/cmac-logo.png" alt="cmac." style={{ height: size, width: "auto", display: "block" }} />;
-}
+const MUT = "#7E8BA1";
 
 function Shell({ children }) {
   return (
@@ -17,35 +15,25 @@ function Shell({ children }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(160deg,#EDF1F2 0%,#DCE3E8 100%)",
-        padding: 20,
-        fontFamily: "Montserrat, 'Segoe UI', system-ui, sans-serif",
+        background: NAVY,
+        padding: 24,
+        fontFamily: "'Montserrat','Segoe UI',system-ui,sans-serif",
       }}
     >
-      <div
-        style={{
-          width: "min(420px, 100%)",
-          background: "#fff",
-          border: "1px solid #E1E7EC",
-          borderTop: "4px solid " + RED,
-          borderRadius: 16,
-          padding: "30px 30px 28px",
-          boxShadow: "0 18px 50px rgba(17,33,56,.14)",
-        }}
-      >
-        {children}
-      </div>
+      <div style={{ width: "min(400px, 100%)" }}>{children}</div>
     </div>
   );
+}
+
+function Logo({ height = 44 }) {
+  return <img src="/cmac-logo-white.png" alt="cmac." style={{ height, width: "auto", display: "block" }} />;
 }
 
 function Splash({ text }) {
   return (
     <Shell>
-      <div style={{ textAlign: "center", color: "#5C6675" }}>
-        <Wordmark />
-        <div style={{ marginTop: 18, fontSize: 13 }}>{text}</div>
-      </div>
+      <Logo />
+      <div style={{ marginTop: 26, fontSize: 13, color: MUT, fontWeight: 600 }}>{text}</div>
     </Shell>
   );
 }
@@ -67,50 +55,86 @@ function Login() {
     }
   };
 
-  const label = { fontSize: 10, textTransform: "uppercase", letterSpacing: "1.1px", color: "#5C6675", fontWeight: 800, display: "block", marginBottom: 6 };
-  const input = { width: "100%", fontFamily: "inherit", fontSize: 14, padding: "10px 12px", border: "1.5px solid #C7CFD8", borderRadius: 10, color: NAVY };
-  const btn = { width: "100%", marginTop: 14, background: RED, color: "#fff", border: "none", borderRadius: 999, padding: "11px 16px", fontSize: 14, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" };
+  const input = {
+    width: "100%",
+    fontFamily: "inherit",
+    fontSize: 15,
+    fontWeight: 600,
+    padding: "13px 16px",
+    border: "none",
+    borderRadius: 10,
+    color: NAVY,
+    background: "#fff",
+    outline: "none",
+  };
+  const btn = {
+    width: "100%",
+    marginTop: 12,
+    background: RED,
+    color: "#fff",
+    border: "none",
+    borderRadius: 999,
+    padding: "13px 18px",
+    fontSize: 14.5,
+    fontWeight: 800,
+    fontFamily: "inherit",
+    cursor: "pointer",
+    letterSpacing: ".2px",
+  };
 
   return (
     <Shell>
-      <Wordmark />
-      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "2.2px", color: "#7E8BA1", fontWeight: 800, marginTop: 8 }}>
-        Operations Command Centre
-      </div>
+      <Logo />
+      <h1 style={{ color: "#fff", fontSize: 30, fontWeight: 800, letterSpacing: "-.5px", lineHeight: 1.15, margin: "34px 0 8px" }}>
+        Operations<br />Command Centre<span style={{ color: RED }}>.</span>
+      </h1>
+      <p style={{ color: MUT, fontSize: 13.5, fontWeight: 600, margin: "0 0 30px", lineHeight: 1.5 }}>
+        One source of truth for actions, projects, mobilisations and reporting.
+      </p>
 
       {state.status === "sent" ? (
-        <div style={{ marginTop: 22 }}>
-          <div style={{ background: "#F0F8F2", border: "1px solid #BFE0C8", borderLeft: "4px solid #1A7F44", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#0F5C2E", lineHeight: 1.5 }}>
-            <b>Check your inbox.</b> We've emailed a secure sign-in link to
-            <br />
-            <b>{email}</b>. Open it on this device to continue.
+        <div>
+          <div style={{ background: "#1B3050", borderLeft: "4px solid " + RED, borderRadius: 10, padding: "16px 18px", color: "#fff", fontSize: 14, lineHeight: 1.6, fontWeight: 600 }}>
+            Check your inbox<span style={{ color: RED }}>.</span>
+            <div style={{ color: "#C9D1DD", fontWeight: 500, marginTop: 6 }}>
+              We've emailed a secure sign-in link to <b style={{ color: "#fff" }}>{email}</b>.
+              Open it on this device to continue. (Check spam the first time.)
+            </div>
           </div>
-          <button style={{ ...btn, background: "#fff", color: NAVY, border: "1.5px solid #C7CFD8", marginTop: 12 }} onClick={() => setState({ status: "idle", msg: "" })}>
+          <button
+            style={{ ...btn, background: "transparent", border: "1.5px solid #3A4E6D", color: "#C9D1DD", marginTop: 14 }}
+            onClick={() => setState({ status: "idle", msg: "" })}
+          >
             Use a different email
           </button>
         </div>
       ) : (
-        <form onSubmit={submit} style={{ marginTop: 22 }}>
-          <label style={label} htmlFor="email">Work email</label>
+        <form onSubmit={submit}>
+          <label
+            htmlFor="email"
+            style={{ display: "block", fontSize: 10, textTransform: "uppercase", letterSpacing: "1.8px", color: MUT, fontWeight: 800, marginBottom: 8 }}
+          >
+            Your email
+          </label>
           <input
             id="email"
             type="email"
             autoFocus
             autoComplete="email"
             required
-            placeholder="you@cmacgroup.com"
+            placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             style={input}
           />
           {state.status === "error" && (
-            <div style={{ marginTop: 10, fontSize: 12.5, color: RED }}>{state.msg}</div>
+            <div style={{ marginTop: 10, fontSize: 13, color: "#FF6B85", fontWeight: 600 }}>{state.msg}</div>
           )}
           <button type="submit" style={btn} disabled={state.status === "sending"}>
             {state.status === "sending" ? "Sending…" : "Email me a sign-in link"}
           </button>
-          <div style={{ marginTop: 14, fontSize: 11.5, color: "#8A93A1", lineHeight: 1.5, textAlign: "center" }}>
-            No password needed. We'll send a one-time secure link.
+          <div style={{ marginTop: 16, fontSize: 12, color: MUT, fontWeight: 600, textAlign: "center" }}>
+            No password needed — we send a one-time secure link.
           </div>
         </form>
       )}
