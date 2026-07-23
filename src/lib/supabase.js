@@ -12,8 +12,12 @@ import { createClient } from "@supabase/supabase-js";
  * sign-in is required. This keeps local development and the offline fallback
  * working with zero configuration.
  */
-const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// These are the PUBLIC Supabase values (the anon/publishable key is designed to
+// be exposed in the browser and is gated by row-level security). They are baked
+// in as defaults so the app connects with no build-time configuration; set the
+// VITE_SUPABASE_* env vars to override (e.g. for a different environment).
+const url = import.meta.env.VITE_SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_-UZzABw_r3oyN8DGTOqiaw_FQU-SYNW";
 
 export const isConfigured = Boolean(url && anonKey);
 
