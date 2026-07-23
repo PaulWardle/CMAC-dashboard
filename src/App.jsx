@@ -2411,7 +2411,7 @@ ${serialiseForAI(data)}`;
   const name = meName(data);
   const who = name && name !== "Me" ? ", " + name.split(" ")[0] : "";
   const hr = new Date().getHours();
-  const greet = hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : "Evening";
+  const greet = hr < 5 ? "Late one" : hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : hr < 21 ? "Evening" : "Late one";
 
   return (
     <div className="aview">
