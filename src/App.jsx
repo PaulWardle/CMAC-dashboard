@@ -684,7 +684,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const waiting = open.filter((w) => w.status === "Waiting");
   const chaseDue = waiting.filter((w) => !w.nextChase || daysUntil(w.nextChase) <= 0);
   const decisions = open.filter((w) => w.type === "Decision");
-  const commitments = open.filter((w) => w.type === "Commitment");
   const stale = open.filter((w) => daysSince(w.updatedAt) > data.settings.staleItem);
   const top5 = open.filter((w) => w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 5);
   const doneRecent = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 7);
@@ -731,7 +730,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
         <Stat n={waiting.length} l="Waiting on others" onClick={() => go("waiting")} />
         <Stat n={chaseDue.length} l="Due for chase" tone={chaseDue.length ? "warn" : ""} onClick={() => go("waiting")} />
         <Stat n={decisions.length} l="Decisions open" onClick={() => go("decisions")} />
-        <Stat n={commitments.length} l="Commitments open" onClick={() => go("decisions")} />
         <Stat n={stale.length} l={"Stale >" + data.settings.staleItem + "d"} tone={stale.length ? "warn" : ""} onClick={() => go("actions")} />
       </div>
 
@@ -1871,7 +1869,6 @@ function WeeklyReview({ data, mutate, go }) {
     ["Review open risks — mitigations still right?", open.filter((w) => w.type === "Risk").length + " open risks", "risks"],
     ["Review open issues and corrective actions", open.filter((w) => w.type === "Issue").length + " open issues", "risks"],
     ["Chase outstanding decisions", open.filter((w) => w.type === "Decision").length + " open decisions", "decisions"],
-    ["Check commitments — still on track? Renegotiate early", open.filter((w) => w.type === "Commitment").length + " open", "decisions"],
     ["Record outcomes on anything completed without one", data.workItems.filter((w) => w.status === "Done" && !w.outcome && daysSince(w.completed) <= 30).length + " missing outcomes", "archive"],
     ["Flag wins for board pack / COO / newsletter", "", "actions"],
     ["Capture lessons from the week (note them in the relevant project)", "", null],
@@ -2431,33 +2428,25 @@ ${serialiseForAI(data)}`;
    stays pin-sharp at any size. Shared by the floating button and the
    Assistant screen. `size` is the rendered height in px. */
 function ClipMark({ size = 68 }) {
-  const wire = "M30 58 V138 a22 22 0 0 0 44 0 V44 a15 15 0 0 0 -30 0 V126 a7 7 0 0 0 14 0 V58";
+  const wire = "M33 52 V108 a17 17 0 0 0 34 0 V48 a10.5 13.5 0 0 0 -21 0 V100 a8 8 0 0 0 16 0 V84";
+  const tube = [["#6e6a99", 8], ["#8a86b2", 6.6], ["#a5a1c8", 5], ["#c2bee2", 3.2]];
   return (
-    <svg width={size / 2} height={size} viewBox="0 0 100 200" aria-hidden="true">
+    <svg width={Math.round(size * 70 / 111)} height={size} viewBox="10 24 70 111" aria-hidden="true">
       <defs>
-        <linearGradient id="cm-metal" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#d6dbee" />
-          <stop offset="0.45" stopColor="#a6adcc" />
-          <stop offset="0.75" stopColor="#8890b4" />
-          <stop offset="1" stopColor="#b3bad8" />
-        </linearGradient>
-        <radialGradient id="cm-eye" cx="0.35" cy="0.3" r="0.9">
+        <radialGradient id="cm-eye" cx="0.4" cy="0.32" r="0.85">
           <stop offset="0" stopColor="#ffffff" />
-          <stop offset="0.7" stopColor="#f2f4fa" />
-          <stop offset="1" stopColor="#c9cfe2" />
+          <stop offset="0.75" stopColor="#f7f7fb" />
+          <stop offset="1" stopColor="#d2d2e0" />
         </radialGradient>
       </defs>
-      <path d={wire} fill="none" stroke="#303a58" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
-      <path d={wire} fill="none" stroke="url(#cm-metal)" strokeWidth="6.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d={wire} fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" transform="translate(-1.1,-1.2)" />
-      <ellipse cx="56" cy="62" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
-      <ellipse cx="52.5" cy="65" rx="6.4" ry="6.9" fill="#101423" />
-      <circle cx="50.2" cy="62.2" r="1.7" fill="#fff" opacity=".9" />
-      <ellipse cx="33" cy="50" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
-      <ellipse cx="29.5" cy="53" rx="6.4" ry="6.9" fill="#101423" />
-      <circle cx="27.2" cy="50.2" r="1.7" fill="#fff" opacity=".9" />
-      <path d="M20 33 q7 -6 17 -3" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
-      <path d="M48 45 q9 -6 17 0" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
+      {tube.map(([c, w]) => <path key={c} d={wire} fill="none" stroke={c} strokeWidth={w} strokeLinecap="round" />)}
+      <path d={wire} fill="none" stroke="#dcdaf0" strokeWidth="1.3" strokeLinecap="round" transform="translate(-0.5,-0.7)" />
+      <ellipse cx="57" cy="69" rx="14" ry="15" fill="url(#cm-eye)" />
+      <ellipse cx="54" cy="75" rx="6.6" ry="7.2" fill="#0c0c14" />
+      <ellipse cx="30" cy="56" rx="14" ry="15" fill="url(#cm-eye)" />
+      <ellipse cx="27" cy="62" rx="6.6" ry="7.2" fill="#0c0c14" />
+      <path d="M14 44 C20 33, 34 31, 43 37 C34 35, 21 37, 14 44 Z" fill="#101018" />
+      <path d="M50 44 C56 33, 70 32, 78 42 C69 37, 57 38, 50 44 Z" fill="#101018" />
     </svg>
   );
 }
