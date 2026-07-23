@@ -299,6 +299,7 @@ const STYLES = `
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
 .chat { display:flex; flex-direction:column; gap:8px; }
+.aview { display:flex; flex-direction:column; height:calc(100dvh - 122px); min-height:380px; max-width:820px; margin:0 auto; width:100%; }
 .bub { max-width:82%; padding:9px 13px; border-radius:14px; font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:break-word; }
 .bub.user { align-self:flex-end; background:#112138; color:#fff; border-bottom-right-radius:4px; }
 .bub.ai { align-self:flex-start; background:#fff; border:1px solid #E1E7EC; border-bottom-left-radius:4px; }
@@ -308,9 +309,9 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .clip-fab:hover { transform:scale(1.08) rotate(-8deg); box-shadow:0 10px 28px rgba(17,33,56,.38); }
 .clip-fab:active { transform:scale(.95); }
 .clip-fab svg { display:block; }
-.clip-fab.open { background:#112138; border-color:#112138; bottom:88px; }
+.clip-fab.open { background:#112138; border-color:#112138; bottom:140px; width:40px; height:40px; box-shadow:0 5px 14px rgba(17,33,56,.3); }
 .clip-fab.open:hover { transform:scale(1.08) rotate(0deg); }
-.clip-fab .fx { color:#fff; font-size:21px; font-weight:700; line-height:1; }
+.clip-fab .fx { color:#fff; font-size:15px; font-weight:700; line-height:1; }
 @media (max-width: 900px) {
   .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
   .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
@@ -337,8 +338,8 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .modal { padding:14px 14px 18px; }
   .h1 { font-size:16px; }
   .clip-fab { right:14px; bottom:calc(72px + env(safe-area-inset-bottom)); width:54px; height:54px; }
-  .clip-fab.open { bottom:calc(160px + env(safe-area-inset-bottom)); width:44px; height:44px; }
-  .clip-fab.open .fx { font-size:17px; }
+  .clip-fab.open { bottom:calc(164px + env(safe-area-inset-bottom)); }
+  .aview { height:calc(100dvh - 205px); }
 }
 @media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
 `;
@@ -2367,8 +2368,13 @@ ${serialiseForAI(data)}`;
     ? ["What needs my attention today?", "What am I waiting on from others?", "Summarise every RED project and mobilisation", "Log a chase to follow up tomorrow"]
     : ["What needs attention today?", "Summarise the project portfolio", "What go-lives are coming up?"];
 
+  const name = meName(data);
+  const who = name && name !== "Me" ? ", " + name.split(" ")[0] : "";
+  const hr = new Date().getHours();
+  const greet = hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : "Evening";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100dvh - 200px)", minHeight: 360, maxWidth: 860 }}>
+    <div className="aview">
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <h2 className="h1">Assistant</h2>
         {canEdit && <label style={{ fontSize: 11.5, display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", color: "#5C6675", fontWeight: 700 }}>
@@ -2376,11 +2382,21 @@ ${serialiseForAI(data)}`;
           Apply changes without asking
         </label>}
       </div>
-      <p className="sub">Live Claude over your workspace — ask anything, or tell it to log, chase, update and close items{canEdit ? "" : " (view-only: it can answer but not change things)"}. Conversations reset when you leave this screen.</p>
       <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
         {!msgs.length && !live && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {starters.map((s) => <button key={s} className="btn sm" onClick={() => send(s)}>{s}</button>)}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16, padding: "16px 10px" }}>
+            <ClipMark size={62} />
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 20, color: "#112138" }}>{greet}{who}. What can I sort for you?</div>
+              <div className="sub" style={{ marginTop: 6, maxWidth: 470, marginLeft: "auto", marginRight: "auto" }}>
+                {canEdit
+                  ? "Ask about anything in the workspace, or tell me what to log, chase, update or close. Conversations reset when you leave this screen."
+                  : "Ask about anything in the workspace — view-only accounts can ask questions but not make changes."}
+              </div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 580 }}>
+              {starters.map((s) => <button key={s} className="btn sm" onClick={() => send(s)}>{s}</button>)}
+            </div>
           </div>)}
         {msgs.map(renderMsg)}
         {live && <div className="bub ai">{live}<span style={{ opacity: .5 }}>▍</span></div>}
@@ -2396,11 +2412,11 @@ ${serialiseForAI(data)}`;
           </div>)}
         <div ref={endRef} />
       </div>
-      <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: "1px solid #E1E7EC" }}>
-        <input className="input" style={{ flex: 1 }} placeholder="Ask, or tell it what to do…" value={input}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "6px 6px 6px 8px", background: "#fff", border: "1px solid #E1E7EC", borderRadius: 999, boxShadow: "0 4px 18px rgba(17,33,56,.07)" }}>
+        <input className="input" style={{ flex: 1, border: "none", background: "transparent", outline: "none", boxShadow: "none" }} placeholder="Ask, or tell it what to do…" value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-        <button className="btn pri" disabled={busy || !!pending || !input.trim()} onClick={() => send()}>Send</button>
+        <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || !input.trim()} onClick={() => send()}>Send</button>
       </div>
     </div>
   );
@@ -2410,22 +2426,27 @@ ${serialiseForAI(data)}`;
    App shell
    ============================================================ */
 
-/* Floating assistant button — a paperclip with googly eyes, in fond memory
-   of a certain 90s office helper. Toggles the Assistant from any screen. */
+/* The paperclip mascot — googly eyes and all, in fond memory of a certain
+   90s office helper. Shared by the floating button and the Assistant screen. */
+function ClipMark({ size = 37 }) {
+  return (
+    <svg width={Math.round(size * 36 / 44)} height={size} viewBox="0 0 36 44" aria-hidden="true">
+      <path d="M12 16v18a6 6 0 0 0 12 0V12a4 4 0 0 0-8 0v19a2 2 0 0 0 4 0V16"
+        fill="none" stroke="#112138" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="11.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
+      <circle cx="24.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
+      <circle cx="12.4" cy="10" r="1.9" fill="#112138" />
+      <circle cx="23.6" cy="10" r="1.9" fill="#112138" />
+    </svg>
+  );
+}
+
+/* Floating assistant button — toggles the Assistant from any screen. */
 function ClipFab({ open, onClick }) {
   return (
     <button className={"clip-fab" + (open ? " open" : "")} onClick={onClick}
       aria-label={open ? "Close assistant" : "Open assistant"} title={open ? "Close assistant" : "Assistant"}>
-      {open ? <span className="fx">✕</span> : (
-        <svg width="30" height="37" viewBox="0 0 36 44" aria-hidden="true">
-          <path d="M12 16v18a6 6 0 0 0 12 0V12a4 4 0 0 0-8 0v19a2 2 0 0 0 4 0V16"
-            fill="none" stroke="#112138" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="11.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
-          <circle cx="24.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
-          <circle cx="12.4" cy="10" r="1.9" fill="#112138" />
-          <circle cx="23.6" cy="10" r="1.9" fill="#112138" />
-        </svg>
-      )}
+      {open ? <span className="fx">✕</span> : <ClipMark size={37} />}
     </button>
   );
 }
