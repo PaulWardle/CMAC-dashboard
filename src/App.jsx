@@ -88,10 +88,23 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
   return JSON.parse(clean.slice(from));
 }
 
-function captureParsePrompt(text, projects, mobs) {
-  return `You extract structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON array (no markdown, no preamble). Each element:
-{"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": string or "", "project": exact name from ${JSON.stringify(projects.map(p=>p.name))} or "", "mobilisation": exact name from ${JSON.stringify(mobs.map(m=>m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}}
-Rules: today is ${fmtD(todayISO())} (${todayISO()}). Resolve relative dates like "Friday" or "end of month" to real dates. Do not invent owners, dates or facts not present in the input. Leave fields empty rather than guessing. Only set flags if the input clearly implies board/COO/newsletter relevance. The input may include typed notes plus attached emails, documents, spreadsheets and screenshots — read them all; note the source file in the description where useful.
+function captureParsePrompt(text, d) {
+  const lim = (s, n) => String(s || "").trim().slice(0, n);
+  const ctx = d.context || {};
+  const openTitles = d.workItems.filter((w) => OPEN_STATUSES.includes(w.status)).slice(0, 150).map((w) => w.title);
+  const ctxBlock = [
+    lim(ctx.org, 2500) && "ABOUT THIS OPERATION:\n" + lim(ctx.org, 2500),
+    lim(ctx.people, 2500) && "PEOPLE & ROLES (use for owners/waiting-on):\n" + lim(ctx.people, 2500),
+    lim(ctx.clients, 2000) && "CLIENTS & TERMINOLOGY:\n" + lim(ctx.clients, 2000),
+    lim(ctx.rules, 2500) && "STANDING TRIAGE RULES (apply these when setting priority, flags, workstream and routing):\n" + lim(ctx.rules, 2500),
+  ].filter(Boolean).join("\n\n");
+  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON array (no markdown, no preamble). Each element:
+{"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "horizon": one of ["Now","Next","Later"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": exact name from ${JSON.stringify(WORKSTREAMS)} or "", "project": exact name from ${JSON.stringify(d.projects.map((p) => p.name))} or "", "mobilisation": exact name from ${JSON.stringify(d.mobs.map((m) => m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}, "duplicateOf": exact title from the existing-items list below or "", "reasoning": string (one short sentence explaining the triage — priority, routing, flags)}
+
+${ctxBlock ? ctxBlock + "\n\n" : ""}EXISTING OPEN ITEMS (check new records against these; if one clearly covers the same work, set duplicateOf to its exact title):
+${JSON.stringify(openTitles)}
+
+Rules: today is ${fmtD(todayISO())} (${todayISO()}). Resolve relative dates like "Friday" or "end of month" to real dates. Do not invent owners, dates or facts not present in the input — but DO use the context above to resolve names to the right people and to apply the standing triage rules. Leave fields empty rather than guessing. Only set flags if the input or the standing rules clearly imply board/COO/newsletter relevance. The input may include typed notes plus attached emails, documents, spreadsheets and screenshots — read them all; note the source file in the description where useful.
 INPUT:
 ${text}`;
 }
@@ -101,6 +114,7 @@ function seedData() {
   return {
     v: 1, workItems: [], projects: [], mobs: [], updates: [], benefits: [], lessons: [], meetings: [],
     stakeholderNotes: {}, dismissedAlerts: [],
+    context: { org: "", people: "", clients: "", rules: "" },
     boardDraft: { period: monthName(), deadline: "", meetingDate: "", commentary: {}, excluded: [], overrides: {}, complete: [] },
     cooDraft: { period: "Week of " + fmtD(todayISO()), commentary: {}, excluded: [], overrides: {} },
     newsDraft: { edition: monthName(), approved: [], rejected: [], headlines: {}, articles: [] },
@@ -775,7 +789,7 @@ function Capture({ data, mutate, openItem }) {
         if (f.kind === "image") blocks.push({ type: "image", source: { type: "base64", media_type: f.media_type, data: f.data } });
         else if (f.kind === "pdf") blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data } });
       });
-      blocks.push({ type: "text", text: captureParsePrompt(combined, data.projects, data.mobs) });
+      blocks.push({ type: "text", text: captureParsePrompt(combined, data) });
       const arr = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 3000);
       const list = (Array.isArray(arr) ? arr : [arr]).map((p) => ({ ...p, _sel: true, _id: uid() }));
       if (!list.length) setErr("Nothing extractable was found in that input.");
@@ -805,8 +819,10 @@ function Capture({ data, mutate, openItem }) {
           status: p.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(p.priority) ? p.priority : "Medium", owner: p.owner || meName(d), waitingOn: p.waitingOn || "",
           project: proj ? proj.id : "", mob: mob ? mob.id : "", workstream: p.workstream || "", country: COUNTRIES.includes(p.country) ? p.country : d.settings.defaultCountry,
           client: "", due: p.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: p.nextAction || "",
-          blocker: "", horizon: "Next", rank: 50, flags: { board: !!p.flags?.board, coo: !!p.flags?.coo, news: !!p.flags?.news, groupWeekly: false, ukWeekly: false },
-          confidentiality: "General internal", notes: [{ ts: todayISO(), text: "Created from capture (AI-proposed, user-approved)" }], extra: {}, outcome: "" });
+          blocker: "", horizon: HORIZONS.includes(p.horizon) ? p.horizon : "Next", rank: 50, flags: { board: !!p.flags?.board, coo: !!p.flags?.coo, news: !!p.flags?.news, groupWeekly: false, ukWeekly: false },
+          confidentiality: "General internal",
+          notes: [{ ts: todayISO(), text: "Created from capture (AI-proposed, user-approved)" + (p.reasoning ? " — " + p.reasoning : "") + (p.duplicateOf ? " · Possible duplicate of: " + p.duplicateOf : "") }],
+          extra: {}, outcome: "" });
       });
       return d;
     }, `Approved ${chosen.length} captured item(s)`);
@@ -816,7 +832,7 @@ function Capture({ data, mutate, openItem }) {
   return (
     <div>
       <h2 className="h1">Capture Inbox</h2>
-      <p className="sub">Dump anything here — typed notes, Outlook emails (.msg/.eml), Word, Excel, PDFs, screenshots. Drag files in, paste a screenshot, or attach. Claude reads the lot and proposes structured records; nothing is saved without your approval.</p>
+      <p className="sub">Dump anything here — typed notes, Outlook emails (.msg/.eml), Word, Excel, PDFs, screenshots. Drag files in, paste a screenshot, or attach. Claude reads the lot, triages it against your standing brief (Settings → AI context & triage rules) and checks for duplicates; nothing is saved without your approval.</p>
       <div className="card" style={dragOver ? { outline: "2px dashed #FD0E33", outlineOffset: -6 } : null}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -851,12 +867,15 @@ function Capture({ data, mutate, openItem }) {
               <input type="checkbox" checked={p._sel} onChange={(e) => updateProp(p._id, "_sel", e.target.checked)} />
               <input className="input" style={{ fontWeight: 600 }} value={p.title || ""} onChange={(e) => updateProp(p._id, "title", e.target.value)} />
             </div>
+            {p.duplicateOf && <div className="warnbox" style={{ marginBottom: 6 }}>Possible duplicate of existing item: <b>{p.duplicateOf}</b> — approve only if this is genuinely new.</div>}
+            {p.reasoning && <div className="sub" style={{ margin: "0 0 6px" }}>Triage: {p.reasoning}</div>}
             <div className="frow">
               <F label="Type"><select className="select" value={p.type || "Action"} onChange={(e) => updateProp(p._id, "type", e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
               <F label="Owner"><input className="input" value={p.owner || ""} onChange={(e) => updateProp(p._id, "owner", e.target.value)} /></F>
               <F label="Waiting on"><input className="input" value={p.waitingOn || ""} onChange={(e) => updateProp(p._id, "waitingOn", e.target.value)} /></F>
               <F label="Due"><input type="date" className="input" value={p.due || ""} onChange={(e) => updateProp(p._id, "due", e.target.value)} /></F>
               <F label="Priority"><select className="select" value={p.priority || "Medium"} onChange={(e) => updateProp(p._id, "priority", e.target.value)}>{PRIORITIES.map((t) => <option key={t}>{t}</option>)}</select></F>
+              <F label="Horizon"><select className="select" value={p.horizon || "Next"} onChange={(e) => updateProp(p._id, "horizon", e.target.value)}>{HORIZONS.map((t) => <option key={t}>{t}</option>)}</select></F>
               <F label="Project"><select className="select" value={p.project || ""} onChange={(e) => updateProp(p._id, "project", e.target.value)}><option value="">—</option>{data.projects.map((x) => <option key={x.id}>{x.name}</option>)}</select></F>
               <F label="Mobilisation"><select className="select" value={p.mobilisation || ""} onChange={(e) => updateProp(p._id, "mobilisation", e.target.value)}><option value="">—</option>{data.mobs.map((x) => <option key={x.id}>{x.name}</option>)}</select></F>
               <F label="Country"><select className="select" value={p.country || ""} onChange={(e) => updateProp(p._id, "country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
@@ -1921,6 +1940,34 @@ function TeamPanel({ onTeamChange }) {
   );
 }
 
+/* AI context & triage rules — the standing brief injected into every capture
+   parse and Ask-AI question, so proposals arrive pre-triaged. */
+function ContextPanel({ data, mutate }) {
+  const c = data.context || {};
+  const set = (k, v) => mutate((d) => { d.context = { ...(d.context || {}), [k]: v }; return d; }, null);
+  const fields = [
+    ["org", "About you & the operation", "Who you are, your role, what the operation covers, current top priorities…"],
+    ["people", "People & roles", "Names, roles and areas — so the AI assigns the right owners and knows who 'waiting on' means…"],
+    ["clients", "Clients & terminology", "Key clients, systems and abbreviations (e.g. Minicabit, Ops Portal, T&Q)…"],
+    ["rules", "Standing triage rules", "e.g. \"Anything safety-related → Critical + board flag\" · \"Minicabit items → High, Minicabit performance workstream\" · \"Recruitment items belong to HR, never me\"…"],
+  ];
+  return (
+    <>
+      <div className="h2">AI context & triage rules</div>
+      <div className="card">
+        <div className="sub" style={{ marginTop: 0 }}>
+          This brief is handed to the AI every time it reads a capture or answers a question — write it like you'd brief a new chief of staff. The better this is, the better everything you dump gets triaged: owners resolved, priorities set, items routed to the right project and flagged for the right report.
+        </div>
+        {fields.map(([k, l, ph]) => (
+          <div key={k} style={{ marginBottom: 8 }}>
+            <label className="flab">{l}</label>
+            <textarea className="ta" rows={3} placeholder={ph} value={c[k] || ""} onChange={(e) => set(k, e.target.value)} />
+          </div>))}
+      </div>
+    </>
+  );
+}
+
 /* Self-service password change for any signed-in account. */
 function ChangePassword() {
   const [pw, setPw] = useState("");
@@ -1971,6 +2018,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
     <div>
       <h2 className="h1">Settings & Data</h2>
       {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} />}
+      {(!auth || auth.canEdit) && <ContextPanel data={data} mutate={mutate} />}
       {auth?.mode === "cloud" && supabase && <ChangePassword />}
       <div className="h2">Profile</div>
       <div className="card"><div className="frow">
@@ -2006,7 +2054,9 @@ function serialiseForAI(data) {
   const items = openItems(data).map((w) => ({ title: w.title, type: w.type, status: w.status, priority: w.priority, owner: w.owner, waitingOn: w.waitingOn || undefined, due: w.due || undefined, project: projName(data, w.project) || undefined, mob: mobName(data, w.mob) || undefined, nextAction: lim(w.nextAction, 80) || undefined, blocker: lim(w.blocker, 80) || undefined, madeTo: w.extra?.madeTo }));
   const projects = data.projects.map((p) => ({ name: p.name, stage: p.stage, rag: p.rag, progress: p.progress, owner: p.owner, target: p.target, position: lim(p.position, 140) }));
   const mobs = data.mobs.map((m) => ({ name: m.name, stage: m.stage, rag: m.rag, goLive: m.goLive, readiness: mobReadiness(m).pct + "%" }));
-  return JSON.stringify({ today: todayISO(), items, projects, mobs }).slice(0, 14000);
+  const ctx = data.context || {};
+  const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules].filter(Boolean).join("\n"), 3000) || undefined;
+  return JSON.stringify({ today: todayISO(), context, items, projects, mobs }).slice(0, 16000);
 }
 function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   const [q, setQ] = useState("");
@@ -2102,6 +2152,7 @@ export default function App({ auth }) {
       // signed-in user's display name and migrate any legacy "Me" owners.
       const displayName = auth && auth.mode === "cloud" ? emailToName(auth.email) : "Me";
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
+      if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "" }; dirty = true; }
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
       }
