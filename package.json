@@ -12,9 +12,12 @@
     "cf:dev": "npm run build && npx wrangler dev"
   },
   "dependencies": {
+    "@kenjiuno/msgreader": "^1.28.0",
     "@supabase/supabase-js": "^2.45.4",
+    "jszip": "^3.10.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",

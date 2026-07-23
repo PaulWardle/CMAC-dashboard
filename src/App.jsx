@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { store } from "./lib/store";
 import { supabase } from "./lib/supabase";
+import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -90,7 +91,7 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
 function captureParsePrompt(text, projects, mobs) {
   return `You extract structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON array (no markdown, no preamble). Each element:
 {"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": string or "", "project": exact name from ${JSON.stringify(projects.map(p=>p.name))} or "", "mobilisation": exact name from ${JSON.stringify(mobs.map(m=>m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}}
-Rules: today is ${fmtD(todayISO())} (${todayISO()}). Resolve relative dates like "Friday" or "end of month" to real dates. Do not invent owners, dates or facts not present in the text. Leave fields empty rather than guessing. Only set flags if the text clearly implies board/COO/newsletter relevance.
+Rules: today is ${fmtD(todayISO())} (${todayISO()}). Resolve relative dates like "Friday" or "end of month" to real dates. Do not invent owners, dates or facts not present in the input. Leave fields empty rather than guessing. Only set flags if the input clearly implies board/COO/newsletter relevance. The input may include typed notes plus attached emails, documents, spreadsheets and screenshots — read them all; note the source file in the description where useful.
 INPUT:
 ${text}`;
 }
@@ -739,14 +740,45 @@ function Capture({ data, mutate, openItem }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [proposals, setProposals] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [ingesting, setIngesting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef(null);
   const inbox = data.workItems.filter((w) => w.status === "Inbox");
+
+  const addFiles = async (fileList) => {
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length) return;
+    setErr(""); setIngesting(true);
+    for (const f of incoming) {
+      if (files.length + 1 > MAX_FILES) { setErr("Maximum " + MAX_FILES + " attachments per capture."); break; }
+      try {
+        const processed = await fileToCapture(f);
+        setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
+      } catch (e) { setErr(String(e.message || e)); }
+    }
+    setIngesting(false);
+  };
+  const onPaste = (e) => {
+    const imgs = Array.from(e.clipboardData?.items || []).filter((i) => i.type.startsWith("image/")).map((i) => i.getAsFile()).filter(Boolean);
+    if (imgs.length) { e.preventDefault(); addFiles(imgs); }
+  };
+
   const parse = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() && !files.length) return;
     setBusy(true); setErr("");
     try {
-      const arr = await askClaude(captureParsePrompt(text, data.projects, data.mobs), true, 2000);
+      const attachTexts = files.filter((f) => f.kind === "text").map((f) => `--- Attached file: ${f.name} ---\n${f.text}`).join("\n\n");
+      const combined = [text.trim(), attachTexts].filter(Boolean).join("\n\n") || "(see the attached images/documents)";
+      const blocks = [];
+      files.forEach((f) => {
+        if (f.kind === "image") blocks.push({ type: "image", source: { type: "base64", media_type: f.media_type, data: f.data } });
+        else if (f.kind === "pdf") blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data } });
+      });
+      blocks.push({ type: "text", text: captureParsePrompt(combined, data.projects, data.mobs) });
+      const arr = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 3000);
       const list = (Array.isArray(arr) ? arr : [arr]).map((p) => ({ ...p, _sel: true, _id: uid() }));
-      if (!list.length) setErr("Nothing extractable was found in that text.");
+      if (!list.length) setErr("Nothing extractable was found in that input.");
       setProposals(list);
     } catch (e) { setErr("Could not parse that just now (" + (e.message || "AI error") + "). You can still add it as a quick note below."); }
     setBusy(false);
@@ -779,19 +811,33 @@ function Capture({ data, mutate, openItem }) {
       return d;
     }, `Approved ${chosen.length} captured item(s)`);
     setProposals((ps) => ps.filter((p) => (only ? p._id !== only : !p._sel)));
-    if (!only) setText("");
+    if (!only) { setText(""); setFiles([]); }
   };
   return (
     <div>
       <h2 className="h1">Capture Inbox</h2>
-      <p className="sub">Type or paste anything — a single action, an email, Teams messages, meeting minutes. Claude proposes structured records; nothing is saved without your approval.</p>
-      <div className="card">
-        <textarea className="ta" rows={5} value={text} onChange={(e) => setText(e.target.value)}
-          placeholder={"Type or paste anything here — a note to self, an email, meeting minutes, a list of actions. It will be turned into structured records for you to review."} />
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button className="btn pri" disabled={busy || !text.trim()} onClick={parse}>{busy ? "Analysing…" : "Propose structured records (AI)"}</button>
+      <p className="sub">Dump anything here — typed notes, Outlook emails (.msg/.eml), Word, Excel, PDFs, screenshots. Drag files in, paste a screenshot, or attach. Claude reads the lot and proposes structured records; nothing is saved without your approval.</p>
+      <div className="card" style={dragOver ? { outline: "2px dashed #FD0E33", outlineOffset: -6 } : null}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}>
+        <textarea className="ta" rows={5} value={text} onChange={(e) => setText(e.target.value)} onPaste={onPaste}
+          placeholder={"Type or paste anything here — notes, an email, meeting minutes, a list of actions… or drop files onto this box (emails, Word, Excel, PDFs, screenshots)."} />
+        {files.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {files.map((f) => (
+              <span key={f._id} className="chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px" }}>
+                {f.kind === "image" ? "🖼" : f.kind === "pdf" ? "📄" : "📎"} {f.name.length > 34 ? f.name.slice(0, 32) + "…" : f.name}
+                <span className="linkish" style={{ color: "#FD0E33" }} onClick={() => setFiles((fs) => fs.filter((x) => x._id !== f._id))}>✕</span>
+              </span>))}
+          </div>)}
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="btn pri" disabled={busy || ingesting || (!text.trim() && !files.length)} onClick={parse}>{busy ? "Analysing…" : "Propose structured records (AI)"}</button>
+          <button className="btn" onClick={() => fileRef.current?.click()} disabled={ingesting}>{ingesting ? "Reading files…" : "📎 Attach files"}</button>
+          <input ref={fileRef} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
+            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           <button className="btn" disabled={!text.trim()} onClick={quickAdd}>Quick add as inbox note</button>
-          <span className="sub" style={{ margin: "4px 0 0 auto" }}>AI proposals are marked and never auto-saved.</span>
+          <span className="sub" style={{ margin: 0 }}>AI proposals are never auto-saved.</span>
         </div>
         {err && <div className="warnbox" style={{ marginTop: 8 }}>{err}</div>}
       </div>
