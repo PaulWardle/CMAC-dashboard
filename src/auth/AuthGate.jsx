@@ -6,11 +6,7 @@ const NAVY = "#112138";
 const RED = "#FD0E33";
 
 function Wordmark({ size = 46 }) {
-  return (
-    <div style={{ fontWeight: 900, fontSize: size, letterSpacing: "-1px", color: NAVY, lineHeight: 1 }}>
-      cmac<span style={{ color: RED }}>.</span>
-    </div>
-  );
+  return <img src="/cmac-logo.png" alt="cmac." style={{ height: size, width: "auto", display: "block" }} />;
 }
 
 function Shell({ children }) {

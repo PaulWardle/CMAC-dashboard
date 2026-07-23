@@ -132,7 +132,7 @@ const STYLES = `
 .occ ::selection { background:#112138; color:#fff; }
 .side { width:226px; min-width:226px; background:#112138; color:#C9D1DD; display:flex; flex-direction:column; }
 .side-brand { padding:18px 18px 12px; }
-.side-brand .blogo { font-size:34px; font-weight:900; letter-spacing:-1px; color:#fff; line-height:1; }
+.side-brand .blogo { width:120px; height:auto; display:block; }
 .side-brand .b2 { font-size:8.5px; text-transform:uppercase; letter-spacing:2.2px; color:#7E8BA1; margin-top:7px; font-weight:700; }
 .side-nav { flex:1; overflow-y:auto; padding:2px 0 16px; }
 .ngroup { font-size:9px; text-transform:uppercase; letter-spacing:1.9px; color:#5F6E86; padding:16px 18px 5px; font-weight:800; }
@@ -214,7 +214,7 @@ const STYLES = `
 .prog > div { height:100%; background:#112138; border-radius:999px; }
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
-@media (max-width: 900px) { .side { width:64px; min-width:64px; } .side .b2,.ngroup,.nitem span.lbl { display:none; } .side-brand .blogo { font-size:20px; } .nitem { justify-content:center; } }
+@media (max-width: 900px) { .side { width:64px; min-width:64px; } .side .b2,.ngroup,.nitem span.lbl { display:none; } .side-brand .blogo { width:46px; } .nitem { justify-content:center; } }
 `;
 
 const Badge = ({ p }) => {
@@ -1903,7 +1903,7 @@ export default function App({ auth }) {
       <style>{STYLES}</style>
       <aside className="side">
         <div className="side-brand">
-          <div className="blogo" aria-label="cmac.">cmac<span style={{ color: "#FD0E33" }}>.</span></div>
+          <img src="/cmac-logo-white.png" alt="cmac." className="blogo" />
           <div className="b2">Operations Command Centre</div>
         </div>
         <nav className="side-nav">
