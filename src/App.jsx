@@ -305,11 +305,11 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .bub.ai { align-self:flex-start; background:#fff; border:1px solid #E1E7EC; border-bottom-left-radius:4px; }
 .burger { display:none; }
 .tabbar { display:none; }
-.clip-fab { position:fixed; right:20px; bottom:20px; z-index:45; width:58px; height:58px; border-radius:50%; background:#fff; border:1.5px solid #D6DDE4; box-shadow:0 8px 24px rgba(17,33,56,.28); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:transform .15s ease, box-shadow .15s ease; }
-.clip-fab:hover { transform:scale(1.08) rotate(-8deg); box-shadow:0 10px 28px rgba(17,33,56,.38); }
+.clip-fab { position:fixed; right:20px; bottom:18px; z-index:45; background:none; border:none; padding:0; cursor:pointer; display:flex; align-items:center; justify-content:center; filter:drop-shadow(0 7px 12px rgba(17,33,56,.35)); transition:transform .15s ease; }
+.clip-fab img { height:68px; display:block; }
+.clip-fab:hover { transform:scale(1.08) rotate(-8deg); }
 .clip-fab:active { transform:scale(.95); }
-.clip-fab svg { display:block; }
-.clip-fab.open { background:#112138; border-color:#112138; bottom:140px; width:40px; height:40px; box-shadow:0 5px 14px rgba(17,33,56,.3); }
+.clip-fab.open { background:#112138; border-radius:50%; bottom:140px; width:40px; height:40px; filter:none; box-shadow:0 5px 14px rgba(17,33,56,.3); }
 .clip-fab.open:hover { transform:scale(1.08) rotate(0deg); }
 .clip-fab .fx { color:#fff; font-size:15px; font-weight:700; line-height:1; }
 @media (max-width: 900px) {
@@ -337,8 +337,9 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .modal-bg { padding:12px 8px; }
   .modal { padding:14px 14px 18px; }
   .h1 { font-size:16px; }
-  .clip-fab { right:14px; bottom:calc(72px + env(safe-area-inset-bottom)); width:54px; height:54px; }
-  .clip-fab.open { bottom:calc(164px + env(safe-area-inset-bottom)); }
+  .clip-fab { right:14px; bottom:calc(70px + env(safe-area-inset-bottom)); }
+  .clip-fab img { height:62px; }
+  .clip-fab.open { bottom:calc(164px + env(safe-area-inset-bottom)); width:40px; height:40px; }
   .aview { height:calc(100dvh - 205px); }
 }
 @media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
@@ -2441,12 +2442,14 @@ function ClipMark({ size = 37 }) {
   );
 }
 
-/* Floating assistant button — toggles the Assistant from any screen. */
+/* Floating assistant button — the real 90s office legend, standing in the
+   corner of every screen. Toggles the Assistant; shows a close button while
+   the Assistant is open. */
 function ClipFab({ open, onClick }) {
   return (
     <button className={"clip-fab" + (open ? " open" : "")} onClick={onClick}
       aria-label={open ? "Close assistant" : "Open assistant"} title={open ? "Close assistant" : "Assistant"}>
-      {open ? <span className="fx">✕</span> : <ClipMark size={37} />}
+      {open ? <span className="fx">✕</span> : <img src="/clippy.png" alt="" />}
     </button>
   );
 }
