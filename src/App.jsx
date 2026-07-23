@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { store } from "./lib/store";
+import { supabase } from "./lib/supabase";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -1686,7 +1687,63 @@ function Archive({ data, openItem }) {
   );
 }
 
-function Settings({ data, mutate, resetAll }) {
+/* Team & Access — admin-only management of accounts, approvals and roles.
+   Talks to the `profiles` table directly; RLS restricts it to admins. */
+function TeamPanel({ onTeamChange }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const load = useCallback(async () => {
+    const { data: d, error } = await supabase.from("profiles").select("*");
+    if (error) { setErr(error.message); return; }
+    const rank = { pending: 0, approved: 1, suspended: 2, rejected: 3 };
+    setRows((d || []).sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.email.localeCompare(b.email)));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const patch = async (user_id, fields) => {
+    const { error } = await supabase.from("profiles").update(fields).eq("user_id", user_id);
+    if (error) { setErr(error.message); return; }
+    await load();
+    if (onTeamChange) onTeamChange();
+  };
+  const statusChip = (s) => (
+    <span className="chip" style={s === "pending" ? { color: "#B45309", borderColor: "#EBCA9B" } : s === "approved" ? { color: "#1A7F44", borderColor: "#BFE0C8" } : { color: "#FD0E33", borderColor: "#F3C2CB" }}>{s}</span>
+  );
+  return (
+    <>
+      <div className="h2">Team & access</div>
+      <div className="card">
+        {err && <div className="warnbox">{err}</div>}
+        {rows === null && <div className="sub">Loading team…</div>}
+        {rows && !rows.length && <div className="sub">No accounts yet. Colleagues can request access from the sign-in screen.</div>}
+        {rows && rows.map((p) => (
+          <div key={p.user_id} className="checkline" style={{ alignItems: "center", gap: 10 }}>
+            <span style={{ flex: 1, fontWeight: 600 }}>{p.email}</span>
+            {statusChip(p.status)}
+            {p.status === "pending" && <>
+              <button className="btn sm pri" onClick={() => patch(p.user_id, { status: "approved", approved_at: new Date().toISOString() })}>Approve (view only)</button>
+              <button className="btn sm danger" onClick={() => patch(p.user_id, { status: "rejected" })}>Reject</button>
+            </>}
+            {p.status === "approved" && <>
+              <select className="select" style={{ width: 130 }} value={p.role}
+                onChange={(e) => patch(p.user_id, { role: e.target.value })}>
+                <option value="viewer">View only</option>
+                <option value="editor">Can edit</option>
+                <option value="admin">Admin</option>
+              </select>
+              {p.role !== "admin" && <button className="btn sm" onClick={() => patch(p.user_id, { status: "suspended" })}>Suspend</button>}
+            </>}
+            {(p.status === "rejected" || p.status === "suspended") &&
+              <button className="btn sm" onClick={() => patch(p.user_id, { status: "approved", approved_at: new Date().toISOString() })}>Re-approve</button>}
+          </div>))}
+        <div className="sub" style={{ margin: "10px 0 0" }}>
+          New sign-ups appear here as <b>pending</b>. Approve to grant view-only access; use the role dropdown to allow editing. All of this is enforced by the database, not just the interface.
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
   const s = data.settings;
   const set = (k, v) => mutate((d) => { d.settings[k] = v; return d; }, null);
   const fileRef = useRef(null);
@@ -1709,6 +1766,7 @@ function Settings({ data, mutate, resetAll }) {
   return (
     <div>
       <h2 className="h1">Settings & Data</h2>
+      {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} />}
       <div className="h2">Profile</div>
       <div className="card"><div className="frow">
         <F label="Your name / role"><input className="input" value={s.userName} onChange={(e) => set("userName", e.target.value)} /></F>
@@ -1811,7 +1869,16 @@ export default function App({ auth }) {
   const askResolver = useRef(null);
   const [storageWarn, setStorageWarn] = useState(false);
   const [roNotice, setRoNotice] = useState(false);
+  const [pendingReqs, setPendingReqs] = useState(0);
   const canEdit = !auth || auth.canEdit;
+
+  // Admin: watch for access requests awaiting approval.
+  const refreshPending = useCallback(async () => {
+    if (!supabase || !auth?.isAdmin || auth.mode !== "cloud") return;
+    const { count } = await supabase.from("profiles").select("*", { count: "exact", head: true }).eq("status", "pending");
+    setPendingReqs(count || 0);
+  }, [auth?.isAdmin, auth?.mode]);
+  useEffect(() => { refreshPending(); }, [refreshPending]);
   const saveTimer = useRef(null);
   const dataRef = useRef(null);
   dataRef.current = data;
@@ -1898,7 +1965,7 @@ export default function App({ auth }) {
       case "newsletter": return <Newsletter data={data} mutate={mutate} />;
       case "weekly": return <WeeklyReview data={data} mutate={mutate} go={go} />;
       case "archive": return <Archive data={data} openItem={openItem} />;
-      case "settings": return <Settings data={data} mutate={mutate} resetAll={resetAll} />;
+      case "settings": return <Settings data={data} mutate={mutate} resetAll={resetAll} auth={auth} onTeamChange={refreshPending} />;
       default: return null;
     }
   })();
@@ -1921,6 +1988,7 @@ export default function App({ auth }) {
                   {k === "command" && alertCount > 0 && <span className="cnt hot">{alertCount}</span>}
                   {k === "capture" && counts.capture > 0 && <span className="cnt">{counts.capture}</span>}
                   {k === "waiting" && counts.waiting > 0 && <span className="cnt">{counts.waiting}</span>}
+                  {k === "settings" && pendingReqs > 0 && <span className="cnt hot">{pendingReqs}</span>}
                 </div>))}
             </div>))}
         </nav>
@@ -1941,7 +2009,8 @@ export default function App({ auth }) {
         </div>
         <div className="content">
           {storageWarn && <div className="warnbox">Persistent storage isn't available right now. Your changes may be lost when you leave — use Settings → Export to take a JSON backup.</div>}
-          {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Only the administrator (paul.wardle@cmacgroup.com) can make changes. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
+          {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Ask Paul Wardle if you need editing rights. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
+          {pendingReqs > 0 && <div className="warnbox">{pendingReqs} access request{pendingReqs > 1 ? "s" : ""} awaiting your approval. <span className="linkish" onClick={() => go("settings")}>Review in Settings → Team & access</span></div>}
           {view}
         </div>
       </div>

@@ -24,12 +24,25 @@ export function onAuthChange(cb) {
   return () => data.subscription.unsubscribe();
 }
 
-/** Email + password sign-in. Accounts are created by the administrator in the
- *  Supabase dashboard (Authentication → Users → Add user), so no verification
- *  emails are ever involved. */
+/** Email + password sign-in. */
 export async function signInWithPassword(email, password) {
   if (!supabase) throw new Error("Cloud storage is not configured.");
   return supabase.auth.signInWithPassword({ email: email.trim(), password });
+}
+
+/** Self-serve registration (company domain only — also enforced by a DB
+ *  trigger). New accounts start as 'pending' until the admin approves them;
+ *  the named admin account is auto-approved (bootstrap). */
+export async function signUpWithPassword(email, password) {
+  if (!supabase) throw new Error("Cloud storage is not configured.");
+  return supabase.auth.signUp({ email: email.trim(), password });
+}
+
+/** Fetch the caller's access profile (status + role). Null if none yet. */
+export async function fetchProfile() {
+  if (!supabase) return null;
+  const { data } = await supabase.from("profiles").select("status, role, email").maybeSingle();
+  return data || null;
 }
 
 export async function signOut() {
