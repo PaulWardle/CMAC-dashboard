@@ -4,10 +4,10 @@ import { VitePWA } from "vite-plugin-pwa";
 
 /**
  * Local-dev AI proxy.
- * In production the /api/ai endpoint is served by a Cloudflare Pages Function
- * (see functions/api/ai.js). During `vite dev` there is no Functions runtime,
- * so this middleware provides the same endpoint using the ANTHROPIC_API_KEY
- * from your local environment. The key never reaches the browser.
+ * In production the /api/ai endpoint is served by the Cloudflare Worker
+ * (see worker.js). During `vite dev` there is no Worker runtime, so this
+ * middleware provides the same endpoint using the ANTHROPIC_API_KEY from your
+ * local environment. The key never reaches the browser.
  */
 function devAiProxy(env) {
   return {

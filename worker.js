@@ -1,19 +1,20 @@
 /**
- * Cloudflare Pages Function — POST /api/ai
+ * Cloudflare Worker entry point.
  *
- * Server-side proxy to the Anthropic Messages API. The API key lives only in
- * the Cloudflare environment (env.ANTHROPIC_API_KEY) and is never exposed to
- * the browser. The client sends { messages, max_tokens }; the model is chosen
- * here (override with the AI_MODEL environment variable).
+ * Serves the built SPA from the static-assets binding (env.ASSETS) and hosts
+ * the server-side AI proxy at POST /api/ai. The Anthropic API key lives only
+ * in the Worker environment (env.ANTHROPIC_API_KEY) and never reaches the
+ * browser. Model is chosen here; override with the AI_MODEL variable.
  */
 
-const json = (obj, status = 200) =>
-  new Response(JSON.stringify(obj), {
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
 
-export async function onRequestPost({ request, env }) {
+async function handleAI(request, env) {
   let body;
   try {
     body = await request.json();
@@ -23,7 +24,6 @@ export async function onRequestPost({ request, env }) {
 
   const messages = body?.messages;
   const maxTokens = Math.min(Number(body?.max_tokens) || 1024, 4096);
-
   if (!Array.isArray(messages) || messages.length === 0) {
     return json({ error: "`messages` array is required" }, 400);
   }
@@ -45,8 +45,8 @@ export async function onRequestPost({ request, env }) {
       },
       body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
     });
-    // Pass the Anthropic response through unchanged so the client can read
-    // the standard { content: [...] } shape (and surface upstream errors).
+    // Pass Anthropic's response straight through so the client reads the
+    // standard { content: [...] } shape (and surfaces upstream errors).
     const data = await upstream.text();
     return new Response(data, {
       status: upstream.status,
@@ -57,4 +57,19 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-// Only POST is handled above; Cloudflare Pages returns 405 for other methods.
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/api/ai") {
+      if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      return handleAI(request, env);
+    }
+
+    // Everything else is served from the built SPA (with SPA fallback to
+    // index.html via the assets `not_found_handling` setting).
+    return env.ASSETS.fetch(request);
+  },
+};

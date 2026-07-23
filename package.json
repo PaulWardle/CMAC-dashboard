@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "gen:icons": "node scripts/gen-icons.mjs",
-    "pages:dev": "wrangler pages dev dist --compatibility-date=2024-11-01"
+    "cf:dev": "npm run build && npx wrangler dev"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

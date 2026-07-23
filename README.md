@@ -9,7 +9,7 @@ Originally built as a single-file Claude Artifact, it is now a full standalone a
 - **Frontend** — React + [Vite](https://vitejs.dev), an installable **PWA** (works offline, add-to-home-screen on phones).
 - **Persistence** — [Supabase](https://supabase.com) (Postgres + Auth). Your whole workspace is one Row-Level-Security-isolated JSONB document per user, so it follows you across devices. Falls back to browser `localStorage` when unconfigured.
 - **AI** — the Capture inbox parser and "Ask AI" search call Anthropic's Claude through a **server-side proxy** (`/api/ai`) so the API key never touches the browser.
-- **Hosting** — [Cloudflare Pages](https://pages.cloudflare.com) (static site + the `/api/ai` Pages Function).
+- **Hosting** — a [Cloudflare Worker](https://developers.cloudflare.com/workers/static-assets/) serving the built SPA as static assets, with `/api/ai` handled by the Worker itself (`worker.js`).
 
 ---
 
@@ -20,8 +20,8 @@ Browser (React PWA)
   │  loads/saves one JSONB doc  ┌──────────────► Supabase  (Postgres + Auth, RLS)
   │  (src/lib/store.js) ────────┘
   │
-  └─ POST /api/ai ──► Cloudflare Pages Function ──► api.anthropic.com
-                      (functions/api/ai.js — holds ANTHROPIC_API_KEY)
+  └─ POST /api/ai ──► Cloudflare Worker ──► api.anthropic.com
+                      (worker.js — holds ANTHROPIC_API_KEY)
 ```
 
 The storage layer is a single small adapter (`src/lib/store.js`) — the one seam
@@ -82,23 +82,30 @@ in `public/icons` with real artwork anytime, keeping the same names/sizes.
 
 ---
 
-## 3. Deploy to Cloudflare Pages
+## 3. Deploy to Cloudflare (Workers + static assets)
+
+This deploys as a **Cloudflare Worker** that serves the built SPA and hosts
+`/api/ai`. Config is in `wrangler.jsonc`; the build runs `npm run build` then
+`npx wrangler deploy`.
 
 1. Push this repo to GitHub (already wired to `PaulWardle/CMAC-dashboard`).
-2. In the **Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git**,
-   pick this repository.
-3. **Build settings:**
-   - Framework preset: **None** (or Vite)
-   - Build command: `npm run build`
-   - Build output directory: `dist`
-   - Functions are auto-detected from the `functions/` directory.
-4. **Environment variables** (Settings → Environment variables):
-   - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` — needed at **build time**.
-   - `ANTHROPIC_API_KEY` — add as a **Secret** (runtime, for the Function). Optional `AI_MODEL`.
-5. Deploy. Add your Pages URL to Supabase's redirect URLs (step 2.4 above).
+2. Cloudflare dashboard → **Workers & Pages → Create → Import a repository** →
+   pick this repo. Set the **build command** to `npm run build` (deploy command
+   stays `npx wrangler deploy`).
+3. **Match the name.** Ensure the `name` in `wrangler.jsonc` equals your Worker's
+   name in Cloudflare — otherwise the deploy targets a different Worker that has no
+   env vars. Edit that one line if needed.
+4. **Environment variables — mind the split** (this is the #1 gotcha):
+   - **Build variables** (available to `npm run build`): `VITE_SUPABASE_URL`,
+     `VITE_SUPABASE_ANON_KEY`. These get baked into the client bundle, so they
+     *must* be present at build time.
+   - **Runtime variables / secrets** (available to the Worker at request time):
+     `ANTHROPIC_API_KEY` (as a **Secret**) and optional `AI_MODEL`.
+5. Deploy. Copy the `*.workers.dev` URL and add it to Supabase's redirect URLs
+   (step 2.4 above).
 
-Local Functions testing: `npm run build && npm run pages:dev` (uses `.dev.vars` for
-`ANTHROPIC_API_KEY`; see `.dev.vars.example`).
+Local Worker testing: `npm run cf:dev` (builds, then runs `wrangler dev`; put
+`ANTHROPIC_API_KEY` in `.dev.vars` — see `.dev.vars.example`).
 
 ---
 
@@ -117,8 +124,9 @@ cloud data.
   restores it. Take one before big changes and after each board pack.
 - **Isolation.** Every row in `workspaces` is gated by RLS to `auth.uid() = user_id`;
   a signed-in user can only ever read/write their own document.
-- **Secrets.** The Anthropic key lives only in the Cloudflare Function environment and
-  is never sent to the browser. Never prefix it with `VITE_`. Never commit a real `.env`.
+- **Secrets.** The Anthropic key lives only in the Cloudflare Worker's runtime
+  environment and is never sent to the browser. Never prefix it with `VITE_`. Never
+  commit a real `.env`.
 - **Indexing.** `public/robots.txt` discourages search-engine indexing of this internal tool.
 - **Hardening.** `public/_headers` sets sensible security headers; a Content-Security-Policy
   is stubbed there (commented) to enable once verified in the browser.
@@ -126,7 +134,8 @@ cloud data.
 ## Project layout
 
 ```
-functions/api/ai.js        Cloudflare Pages Function — Claude proxy
+worker.js                  Cloudflare Worker — serves the SPA + /api/ai Claude proxy
+wrangler.jsonc             Cloudflare Worker config (assets + entry point)
 public/                    static assets, icons, manifest, _headers, _redirects
 scripts/gen-icons.mjs      dependency-free PWA icon generator
 src/
@@ -147,5 +156,5 @@ vite.config.js             Vite + PWA + dev AI proxy
 | `npm run dev` | Local dev server (with local `/api/ai`) |
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Preview the built site |
-| `npm run pages:dev` | Run the built site + Functions via Wrangler |
+| `npm run cf:dev` | Build, then run the Worker locally via `wrangler dev` |
 | `npm run gen:icons` | Regenerate PWA icons |
