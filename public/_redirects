@@ -1,4 +1,0 @@
-# SPA fallback: serve the app shell for any unknown path.
-# Cloudflare Pages runs Functions (e.g. /api/ai) and serves existing static
-# files BEFORE applying this rule, so it only catches genuine app routes.
-/*    /index.html   200
