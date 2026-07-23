@@ -57,6 +57,68 @@ async function handleAI(request, env) {
   }
 }
 
+/**
+ * POST /api/admin/reset-password — admin-only password reset.
+ *
+ * The caller proves who they are with their own Supabase session token; the
+ * Worker verifies that token, confirms the caller's profile is an APPROVED
+ * ADMIN, and only then sets the target user's password via Supabase's admin
+ * API using the server-side secret key (env.SUPABASE_SERVICE_ROLE_KEY —
+ * never exposed to the browser).
+ */
+async function handleAdminResetPassword(request, env) {
+  const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) {
+    return json({ error: "Password admin is not configured on the server (missing SUPABASE_SERVICE_ROLE_KEY secret)." }, 503);
+  }
+
+  const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!token) return json({ error: "Not signed in." }, 401);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  const userId = body?.user_id;
+  const newPassword = String(body?.new_password || "");
+  if (!userId || newPassword.length < 8) {
+    return json({ error: "A user_id and a password of at least 8 characters are required." }, 400);
+  }
+
+  // 1. Identify the caller from their session token.
+  const meRes = await fetch(supabaseUrl + "/auth/v1/user", {
+    headers: { Authorization: "Bearer " + token, apikey: serviceKey },
+  });
+  if (!meRes.ok) return json({ error: "Your session has expired — sign in again." }, 401);
+  const me = await meRes.json();
+
+  // 2. Confirm the caller is an approved admin (service key bypasses RLS).
+  const profRes = await fetch(
+    supabaseUrl + "/rest/v1/profiles?user_id=eq." + encodeURIComponent(me.id) + "&select=role,status",
+    { headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey } }
+  );
+  const profiles = profRes.ok ? await profRes.json() : [];
+  const caller = profiles[0];
+  if (!caller || caller.role !== "admin" || caller.status !== "approved") {
+    return json({ error: "Only an administrator can reset passwords." }, 403);
+  }
+
+  // 3. Set the target user's password via the admin API.
+  const upd = await fetch(supabaseUrl + "/auth/v1/admin/users/" + encodeURIComponent(userId), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+    body: JSON.stringify({ password: newPassword }),
+  });
+  if (!upd.ok) {
+    const detail = (await upd.text()).slice(0, 200);
+    return json({ error: "Could not set the password: " + detail }, 502);
+  }
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -66,6 +128,13 @@ export default {
         return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
       }
       return handleAI(request, env);
+    }
+
+    if (url.pathname === "/api/admin/reset-password") {
+      if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+      }
+      return handleAdminResetPassword(request, env);
     }
 
     // Everything else is served from the built SPA (with SPA fallback to

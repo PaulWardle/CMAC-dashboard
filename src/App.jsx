@@ -1692,6 +1692,24 @@ function Archive({ data, openItem }) {
 function TeamPanel({ onTeamChange }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const resetPw = async (p) => {
+    const pw = await askPrompt("New temporary password for " + p.email + " (at least 8 characters). Tell them what it is — they can change it themselves in Settings.");
+    if (!pw) return;
+    if (pw.length < 8) { setErr("Passwords need at least 8 characters."); return; }
+    setErr(""); setMsg("");
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (s?.session?.access_token || "") },
+        body: JSON.stringify({ user_id: p.user_id, new_password: pw }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) setErr(d.error || "Could not set the password.");
+      else setMsg("Password updated for " + p.email + " — let them know the new one.");
+    } catch (e) { setErr("Could not reach the server: " + (e.message || e)); }
+  };
   const load = useCallback(async () => {
     const { data: d, error } = await supabase.from("profiles").select("*");
     if (error) { setErr(error.message); return; }
@@ -1713,6 +1731,7 @@ function TeamPanel({ onTeamChange }) {
       <div className="h2">Team & access</div>
       <div className="card">
         {err && <div className="warnbox">{err}</div>}
+        {msg && <div className="okbox">{msg}</div>}
         {rows === null && <div className="sub">Loading team…</div>}
         {rows && !rows.length && <div className="sub">No accounts yet. Colleagues can request access from the sign-in screen.</div>}
         {rows && rows.map((p) => (
@@ -1730,6 +1749,7 @@ function TeamPanel({ onTeamChange }) {
                 <option value="editor">Can edit</option>
                 <option value="admin">Admin</option>
               </select>
+              <button className="btn sm" onClick={() => resetPw(p)}>Set password</button>
               {p.role !== "admin" && <button className="btn sm" onClick={() => patch(p.user_id, { status: "suspended" })}>Suspend</button>}
             </>}
             {(p.status === "rejected" || p.status === "suspended") &&
@@ -1738,6 +1758,32 @@ function TeamPanel({ onTeamChange }) {
         <div className="sub" style={{ margin: "10px 0 0" }}>
           New sign-ups appear here as <b>pending</b>. Approve to grant view-only access; use the role dropdown to allow editing. All of this is enforced by the database, not just the interface.
         </div>
+      </div>
+    </>
+  );
+}
+
+/* Self-service password change for any signed-in account. */
+function ChangePassword() {
+  const [pw, setPw] = useState("");
+  const [m, setM] = useState(null);
+  const save = async () => {
+    if (pw.length < 8) return setM({ ok: false, text: "Passwords need at least 8 characters." });
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    if (error) setM({ ok: false, text: error.message });
+    else { setM({ ok: true, text: "Password changed. Use it next time you sign in." }); setPw(""); }
+  };
+  return (
+    <>
+      <div className="h2">Your account</div>
+      <div className="card">
+        <div className="flab">Change my password</div>
+        <div style={{ display: "flex", gap: 8, maxWidth: 420 }}>
+          <input className="input" type="password" placeholder="New password (min 8 characters)" value={pw}
+            onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
+          <button className="btn pri" disabled={pw.length < 8} onClick={save}>Change</button>
+        </div>
+        {m && <div className={m.ok ? "okbox" : "warnbox"} style={{ marginTop: 8, marginBottom: 0 }}>{m.text}</div>}
       </div>
     </>
   );
@@ -1767,6 +1813,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
     <div>
       <h2 className="h1">Settings & Data</h2>
       {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} />}
+      {auth?.mode === "cloud" && supabase && <ChangePassword />}
       <div className="h2">Profile</div>
       <div className="card"><div className="frow">
         <F label="Your name / role"><input className="input" value={s.userName} onChange={(e) => set("userName", e.target.value)} /></F>
