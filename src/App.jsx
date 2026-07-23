@@ -304,6 +304,13 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .bub.ai { align-self:flex-start; background:#fff; border:1px solid #E1E7EC; border-bottom-left-radius:4px; }
 .burger { display:none; }
 .tabbar { display:none; }
+.clip-fab { position:fixed; right:20px; bottom:20px; z-index:45; width:58px; height:58px; border-radius:50%; background:#fff; border:1.5px solid #D6DDE4; box-shadow:0 8px 24px rgba(17,33,56,.28); display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; transition:transform .15s ease, box-shadow .15s ease; }
+.clip-fab:hover { transform:scale(1.08) rotate(-8deg); box-shadow:0 10px 28px rgba(17,33,56,.38); }
+.clip-fab:active { transform:scale(.95); }
+.clip-fab svg { display:block; }
+.clip-fab.open { background:#112138; border-color:#112138; bottom:88px; }
+.clip-fab.open:hover { transform:scale(1.08) rotate(0deg); }
+.clip-fab .fx { color:#fff; font-size:21px; font-weight:700; line-height:1; }
 @media (max-width: 900px) {
   .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
   .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
@@ -329,6 +336,9 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .modal-bg { padding:12px 8px; }
   .modal { padding:14px 14px 18px; }
   .h1 { font-size:16px; }
+  .clip-fab { right:14px; bottom:calc(72px + env(safe-area-inset-bottom)); width:54px; height:54px; }
+  .clip-fab.open { bottom:calc(160px + env(safe-area-inset-bottom)); width:44px; height:44px; }
+  .clip-fab.open .fx { font-size:17px; }
 }
 @media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
 `;
@@ -2399,8 +2409,29 @@ ${serialiseForAI(data)}`;
 /* ============================================================
    App shell
    ============================================================ */
+
+/* Floating assistant button — a paperclip with googly eyes, in fond memory
+   of a certain 90s office helper. Toggles the Assistant from any screen. */
+function ClipFab({ open, onClick }) {
+  return (
+    <button className={"clip-fab" + (open ? " open" : "")} onClick={onClick}
+      aria-label={open ? "Close assistant" : "Open assistant"} title={open ? "Close assistant" : "Assistant"}>
+      {open ? <span className="fx">✕</span> : (
+        <svg width="30" height="37" viewBox="0 0 36 44" aria-hidden="true">
+          <path d="M12 16v18a6 6 0 0 0 12 0V12a4 4 0 0 0-8 0v19a2 2 0 0 0 4 0V16"
+            fill="none" stroke="#112138" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="11.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
+          <circle cx="24.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
+          <circle cx="12.4" cy="10" r="1.9" fill="#112138" />
+          <circle cx="23.6" cy="10" r="1.9" fill="#112138" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 const NAV = [
-  ["Daily working", [["command", "Command Centre"], ["assistant", "Assistant"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
+  ["Daily working", [["command", "Command Centre"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
   ["Delivery", [["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
   ["Reporting", [["board", "Board Pack"], ["coo", "COO Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
@@ -2421,6 +2452,7 @@ export default function App({ auth }) {
   const [navOpen, setNavOpen] = useState(false);
   const [syncNote, setSyncNote] = useState("");
   const lastSynced = useRef(0);
+  const prevNav = useRef("command");
   const canEdit = !auth || auth.canEdit;
 
   // Admin: watch for access requests awaiting approval.
@@ -2533,6 +2565,10 @@ export default function App({ auth }) {
   const openItem = (w) => setEditItem(w);
   const newItem = (preset) => setEditItem({ ...(typeof preset === "object" && preset ? preset : {}) });
   const go = (k) => { setNav(k); setNavOpen(false); if (k !== "projects") setProjDetail(null); if (k !== "mobs") setMobDetail(null); };
+  const toggleAssistant = () => {
+    if (nav === "assistant") go(prevNav.current || "command");
+    else { prevNav.current = nav; go("assistant"); }
+  };
   const openProject = (id) => { setProjDetail(id); setNav("projects"); };
   const openMob = (id) => { setMobDetail(id); setNav("mobs"); };
   const saveItem = (w, isNew) => {
@@ -2601,7 +2637,7 @@ export default function App({ auth }) {
       <div className="main">
         <div className="topbar">
           <button className="burger" onClick={() => setNavOpen(true)} aria-label="Open menu">☰</button>
-          <span className="ttl">{(NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
+          <span className="ttl">{nav === "assistant" ? "Assistant" : (NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
           <SearchBox data={data} openItem={openItem} go={go} setProjDetail={setProjDetail} setMobDetail={setMobDetail} />
           {canEdit && <button className="btn sm pri" onClick={() => newItem()}>+ New</button>}
           {!canEdit && <span className="chip" title="Only the administrator can make changes">View only</span>}
@@ -2622,7 +2658,7 @@ export default function App({ auth }) {
         </div>
       </div>
       <nav className="tabbar">
-        {[["command", "⌂", "Home"], ["assistant", "✦", "Assistant"], ["capture", "＋", "Capture"], ["waiting", "⏳", "Waiting"]].map(([k, icon, label]) => (
+        {[["command", "⌂", "Home"], ["capture", "＋", "Capture"], ["waiting", "⏳", "Waiting"]].map(([k, icon, label]) => (
           <button key={k} className={nav === k ? "on" : ""} onClick={() => go(k)}>
             {k === "command" && alertCount > 0 && <span className="tdot" />}
             <span className="ticon">{icon}</span>{label}
@@ -2632,6 +2668,7 @@ export default function App({ auth }) {
           <span className="ticon">☰</span>Menu
         </button>
       </nav>
+      <ClipFab open={nav === "assistant"} onClick={toggleAssistant} />
       {editItem !== null && <WorkItemModal data={data} item={editItem} onSave={saveItem} onDelete={deleteItem} onClose={() => setEditItem(null)} />}
       <AskDialog req={ask} onResolve={resolveAsk} />
     </div>
