@@ -306,7 +306,7 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .burger { display:none; }
 .tabbar { display:none; }
 .clip-fab { position:fixed; right:20px; bottom:18px; z-index:45; background:none; border:none; padding:0; cursor:pointer; display:flex; align-items:center; justify-content:center; filter:drop-shadow(0 7px 12px rgba(17,33,56,.35)); transition:transform .15s ease; }
-.clip-fab img { height:68px; display:block; }
+.clip-fab svg { height:68px; width:auto; display:block; }
 .clip-fab:hover { transform:scale(1.08) rotate(-8deg); }
 .clip-fab:active { transform:scale(.95); }
 .clip-fab.open { background:#112138; border-radius:50%; bottom:140px; width:40px; height:40px; filter:none; box-shadow:0 5px 14px rgba(17,33,56,.3); }
@@ -338,7 +338,7 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .modal { padding:14px 14px 18px; }
   .h1 { font-size:16px; }
   .clip-fab { right:14px; bottom:calc(70px + env(safe-area-inset-bottom)); }
-  .clip-fab img { height:62px; }
+  .clip-fab svg { height:62px; }
   .clip-fab.open { bottom:calc(164px + env(safe-area-inset-bottom)); width:40px; height:40px; }
   .aview { height:calc(100dvh - 205px); }
 }
@@ -2386,7 +2386,7 @@ ${serialiseForAI(data)}`;
       <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
         {!msgs.length && !live && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16, padding: "16px 10px" }}>
-            <ClipMark size={62} />
+            <ClipMark size={100} />
             <div>
               <div style={{ fontWeight: 800, fontSize: 20, color: "#112138" }}>{greet}{who}. What can I sort for you?</div>
               <div className="sub" style={{ marginTop: 6, maxWidth: 470, marginLeft: "auto", marginRight: "auto" }}>
@@ -2427,29 +2427,48 @@ ${serialiseForAI(data)}`;
    App shell
    ============================================================ */
 
-/* The paperclip mascot — googly eyes and all, in fond memory of a certain
-   90s office helper. Shared by the floating button and the Assistant screen. */
-function ClipMark({ size = 37 }) {
+/* The paperclip mascot — a vector recreation of the 90s office legend, so he
+   stays pin-sharp at any size. Shared by the floating button and the
+   Assistant screen. `size` is the rendered height in px. */
+function ClipMark({ size = 68 }) {
+  const wire = "M30 58 V138 a22 22 0 0 0 44 0 V44 a15 15 0 0 0 -30 0 V126 a7 7 0 0 0 14 0 V58";
   return (
-    <svg width={Math.round(size * 36 / 44)} height={size} viewBox="0 0 36 44" aria-hidden="true">
-      <path d="M12 16v18a6 6 0 0 0 12 0V12a4 4 0 0 0-8 0v19a2 2 0 0 0 4 0V16"
-        fill="none" stroke="#112138" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="11.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
-      <circle cx="24.5" cy="9" r="4.4" fill="#fff" stroke="#112138" strokeWidth="1.6" />
-      <circle cx="12.4" cy="10" r="1.9" fill="#112138" />
-      <circle cx="23.6" cy="10" r="1.9" fill="#112138" />
+    <svg width={size / 2} height={size} viewBox="0 0 100 200" aria-hidden="true">
+      <defs>
+        <linearGradient id="cm-metal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#d6dbee" />
+          <stop offset="0.45" stopColor="#a6adcc" />
+          <stop offset="0.75" stopColor="#8890b4" />
+          <stop offset="1" stopColor="#b3bad8" />
+        </linearGradient>
+        <radialGradient id="cm-eye" cx="0.35" cy="0.3" r="0.9">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.7" stopColor="#f2f4fa" />
+          <stop offset="1" stopColor="#c9cfe2" />
+        </radialGradient>
+      </defs>
+      <path d={wire} fill="none" stroke="#303a58" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={wire} fill="none" stroke="url(#cm-metal)" strokeWidth="6.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={wire} fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" transform="translate(-1.1,-1.2)" />
+      <ellipse cx="56" cy="62" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
+      <ellipse cx="52.5" cy="65" rx="6.4" ry="6.9" fill="#101423" />
+      <circle cx="50.2" cy="62.2" r="1.7" fill="#fff" opacity=".9" />
+      <ellipse cx="33" cy="50" rx="13" ry="13.6" fill="url(#cm-eye)" stroke="#2f3550" strokeWidth="1.7" />
+      <ellipse cx="29.5" cy="53" rx="6.4" ry="6.9" fill="#101423" />
+      <circle cx="27.2" cy="50.2" r="1.7" fill="#fff" opacity=".9" />
+      <path d="M20 33 q7 -6 17 -3" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
+      <path d="M48 45 q9 -6 17 0" fill="none" stroke="#12141c" strokeWidth="4" strokeLinecap="round" />
     </svg>
   );
 }
 
-/* Floating assistant button — the real 90s office legend, standing in the
-   corner of every screen. Toggles the Assistant; shows a close button while
-   the Assistant is open. */
+/* Floating assistant button — Clippy standing in the corner of every screen.
+   Toggles the Assistant; shows a close button while the Assistant is open. */
 function ClipFab({ open, onClick }) {
   return (
     <button className={"clip-fab" + (open ? " open" : "")} onClick={onClick}
       aria-label={open ? "Close assistant" : "Open assistant"} title={open ? "Close assistant" : "Assistant"}>
-      {open ? <span className="fx">✕</span> : <img src="/clippy.png" alt="" />}
+      {open ? <span className="fx">✕</span> : <ClipMark size={68} />}
     </button>
   );
 }
