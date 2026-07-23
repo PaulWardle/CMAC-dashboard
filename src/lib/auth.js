@@ -24,13 +24,12 @@ export function onAuthChange(cb) {
   return () => data.subscription.unsubscribe();
 }
 
-/** Send a passwordless magic-link sign-in email. */
-export async function signInWithEmail(email) {
+/** Email + password sign-in. Accounts are created by the administrator in the
+ *  Supabase dashboard (Authentication → Users → Add user), so no verification
+ *  emails are ever involved. */
+export async function signInWithPassword(email, password) {
   if (!supabase) throw new Error("Cloud storage is not configured.");
-  return supabase.auth.signInWithOtp({
-    email: email.trim(),
-    options: { emailRedirectTo: window.location.origin },
-  });
+  return supabase.auth.signInWithPassword({ email: email.trim(), password });
 }
 
 export async function signOut() {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { isConfigured, getSession, onAuthChange, signInWithEmail, signOut } from "../lib/auth";
+import { isConfigured, getSession, onAuthChange, signInWithPassword, signOut } from "../lib/auth";
 import { ALLOWED_EMAIL_DOMAIN, isAllowedEmail, isAdminEmail } from "../lib/config";
 import App from "../App";
 
@@ -41,22 +41,27 @@ function Splash({ text }) {
 
 function Login() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [state, setState] = useState({ status: "idle", msg: "" });
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || !password) return;
     if (!isAllowedEmail(email)) {
       setState({ status: "error", msg: "Please use your @" + ALLOWED_EMAIL_DOMAIN + " email address." });
       return;
     }
     setState({ status: "sending", msg: "" });
     try {
-      const { error } = await signInWithEmail(email);
+      const { error } = await signInWithPassword(email, password);
       if (error) throw error;
-      setState({ status: "sent", msg: "" });
+      // Success: the auth listener flips straight into the app.
     } catch (err) {
-      setState({ status: "error", msg: err?.message || "Could not send the link. Please try again." });
+      const raw = (err?.message || "").toLowerCase();
+      setState({
+        status: "error",
+        msg: raw.includes("invalid") ? "Incorrect email or password." : err?.message || "Could not sign you in. Please try again.",
+      });
     }
   };
 
@@ -97,52 +102,51 @@ function Login() {
         One source of truth for actions, projects, mobilisations and reporting.
       </p>
 
-      {state.status === "sent" ? (
-        <div>
-          <div style={{ background: "#1B3050", borderLeft: "4px solid " + RED, borderRadius: 10, padding: "16px 18px", color: "#fff", fontSize: 14, lineHeight: 1.6, fontWeight: 600 }}>
-            Check your inbox<span style={{ color: RED }}>.</span>
-            <div style={{ color: "#C9D1DD", fontWeight: 500, marginTop: 6 }}>
-              We've emailed a secure sign-in link to <b style={{ color: "#fff" }}>{email}</b>.
-              Open it on this device to continue. (Check spam the first time.)
-            </div>
-          </div>
-          <button
-            style={{ ...btn, background: "transparent", border: "1.5px solid #3A4E6D", color: "#C9D1DD", marginTop: 14 }}
-            onClick={() => setState({ status: "idle", msg: "" })}
-          >
-            Use a different email
-          </button>
+      <form onSubmit={submit}>
+        <label
+          htmlFor="email"
+          style={{ display: "block", fontSize: 10, textTransform: "uppercase", letterSpacing: "1.8px", color: MUT, fontWeight: 800, marginBottom: 8 }}
+        >
+          Work email
+        </label>
+        <input
+          id="email"
+          type="email"
+          autoFocus
+          autoComplete="email"
+          required
+          placeholder={"name@" + ALLOWED_EMAIL_DOMAIN}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          style={input}
+        />
+        <label
+          htmlFor="password"
+          style={{ display: "block", fontSize: 10, textTransform: "uppercase", letterSpacing: "1.8px", color: MUT, fontWeight: 800, margin: "14px 0 8px" }}
+        >
+          Password
+        </label>
+        <input
+          id="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          placeholder="••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={input}
+        />
+        {state.status === "error" && (
+          <div style={{ marginTop: 10, fontSize: 13, color: "#FF6B85", fontWeight: 600 }}>{state.msg}</div>
+        )}
+        <button type="submit" style={btn} disabled={state.status === "sending"}>
+          {state.status === "sending" ? "Signing in…" : "Sign in"}
+        </button>
+        <div style={{ marginTop: 16, fontSize: 12, color: MUT, fontWeight: 600, textAlign: "center", lineHeight: 1.6 }}>
+          You'll stay signed in on this device.<br />
+          Need an account or forgotten your password? Contact Paul Wardle.
         </div>
-      ) : (
-        <form onSubmit={submit}>
-          <label
-            htmlFor="email"
-            style={{ display: "block", fontSize: 10, textTransform: "uppercase", letterSpacing: "1.8px", color: MUT, fontWeight: 800, marginBottom: 8 }}
-          >
-            Your email
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoFocus
-            autoComplete="email"
-            required
-            placeholder={"name@" + ALLOWED_EMAIL_DOMAIN}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={input}
-          />
-          {state.status === "error" && (
-            <div style={{ marginTop: 10, fontSize: 13, color: "#FF6B85", fontWeight: 600 }}>{state.msg}</div>
-          )}
-          <button type="submit" style={btn} disabled={state.status === "sending"}>
-            {state.status === "sending" ? "Sending…" : "Email me a sign-in link"}
-          </button>
-          <div style={{ marginTop: 16, fontSize: 12, color: MUT, fontWeight: 600, textAlign: "center" }}>
-            No password needed — we send a one-time secure link.
-          </div>
-        </form>
-      )}
+      </form>
     </Shell>
   );
 }
