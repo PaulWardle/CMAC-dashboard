@@ -119,9 +119,102 @@ async function handleAdminResetPassword(request, env) {
   return json({ ok: true });
 }
 
+/* ---------------------------------------------------------------------------
+ * Daily exceptions digest.
+ * A cron trigger (see wrangler.jsonc) loads the shared workspace with the
+ * server-side key, computes the morning exceptions, and emails them via
+ * Resend. Configure with secrets: SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY,
+ * and optionally DIGEST_TO / DIGEST_FROM. Without RESEND_API_KEY it does
+ * nothing. GET /api/digest/preview (admin-signed-in) renders it in-browser.
+ * ------------------------------------------------------------------------- */
+function buildDigest(doc) {
+  const today = new Date().toISOString().slice(0, 10);
+  const days = (s) => (s ? Math.round((new Date(String(s).slice(0, 10)) - new Date(today)) / 86400000) : null);
+  const fmt = (s) => { const p = String(s || "").slice(0, 10).split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : "—"; };
+  const OPEN = ["Inbox", "Planned", "In Progress", "Waiting", "Blocked", "Review"];
+  const items = (doc.workItems || []).filter((w) => OPEN.includes(w.status));
+  const sec = [];
+  const add = (title, arr) => { if (arr.length) sec.push({ title, rows: arr }); };
+  add("Overdue", items.filter((w) => w.due && days(w.due) < 0).map((w) => `${w.title} — due ${fmt(w.due)}${w.owner ? " · " + w.owner : ""}`));
+  add("Due today", items.filter((w) => days(w.due) === 0).map((w) => w.title));
+  add("Blocked", items.filter((w) => w.status === "Blocked").map((w) => `${w.title}${w.blocker ? " — " + w.blocker : ""}`));
+  add("Chases due", items.filter((w) => w.status === "Waiting" && (!w.nextChase || days(w.nextChase) <= 0)).map((w) => `${w.title}${w.waitingOn ? " — waiting on " + w.waitingOn : ""}`));
+  add("Decisions past required date", items.filter((w) => w.type === "Decision" && days(w.extra?.requiredBy || w.due) < 0).map((w) => w.title));
+  add("Commitments due within 7 days", items.filter((w) => w.type === "Commitment" && days(w.due) !== null && days(w.due) >= 0 && days(w.due) <= 7).map((w) => `${w.title} — ${fmt(w.due)}`));
+  add("Go-lives within 30 days", (doc.mobs || []).filter((m) => m.stage !== "Closed" && days(m.goLive) !== null && days(m.goLive) >= 0 && days(m.goLive) <= 30).map((m) => `${m.name} — ${fmt(m.goLive)} (${days(m.goLive)}d)`));
+  if (doc.boardDraft?.deadline && days(doc.boardDraft.deadline) !== null && days(doc.boardDraft.deadline) <= 5 && days(doc.boardDraft.deadline) >= 0) {
+    sec.push({ title: "Board pack", rows: ["Submission deadline " + fmt(doc.boardDraft.deadline) + " — " + days(doc.boardDraft.deadline) + " day(s) away"] });
+  }
+  const total = sec.reduce((n, s) => n + s.rows.length, 0);
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const body = sec.map((s) =>
+    `<h2 style="font:800 11px Montserrat,Arial,sans-serif;color:#FD0E33;text-transform:uppercase;letter-spacing:1.5px;margin:18px 0 6px;">${esc(s.title)} (${s.rows.length})</h2>` +
+    `<ul style="margin:0 0 0 18px;padding:0;">` + s.rows.slice(0, 12).map((r) => `<li style="margin-bottom:5px;">${esc(r)}</li>`).join("") +
+    (s.rows.length > 12 ? `<li>… and ${s.rows.length - 12} more</li>` : "") + `</ul>`).join("");
+  const html = `<div style="font-family:Montserrat,'Segoe UI',Arial,sans-serif;color:#112138;font-size:14px;line-height:1.55;max-width:560px;">
+<div style="border-bottom:3px solid #112138;padding-bottom:8px;margin-bottom:6px;font:900 22px Montserrat,Arial,sans-serif;">cmac<span style="color:#FD0E33">.</span></div>
+<h1 style="font-size:18px;font-weight:800;margin:12px 0 2px;">Morning brief<span style="color:#FD0E33">.</span></h1>
+<div style="color:#5C6675;font-size:12px;margin-bottom:8px;">${fmt(today)} · ${total ? total + " item(s) need attention" : "No exceptions — clear runway today"}</div>
+${body || '<p>Nothing overdue, blocked, or waiting on a chase. Enjoy it.</p>'}
+<p style="margin-top:20px;"><a href="https://cmac-dashboard.paulanthonywardle.workers.dev" style="color:#FD0E33;font-weight:800;">Open the Command Centre →</a></p>
+<div style="color:#8A93A1;font-size:11px;border-top:1px solid #E1E7EC;margin-top:18px;padding-top:8px;">Automated daily digest from the CMAC Operations Command Centre.</div>
+</div>`;
+  return { html, total };
+}
+
+async function loadWorkspaceDoc(env) {
+  const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) return null;
+  const r = await fetch(supabaseUrl + "/rest/v1/shared_workspace?id=eq.main&select=data", {
+    headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey },
+  });
+  if (!r.ok) return null;
+  const rows = await r.json();
+  return rows[0]?.data || null;
+}
+
+async function sendDigest(env) {
+  if (!env.RESEND_API_KEY) return; // digest not configured — quietly skip
+  const doc = await loadWorkspaceDoc(env);
+  if (!doc) return;
+  const { html, total } = buildDigest(doc);
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.RESEND_API_KEY },
+    body: JSON.stringify({
+      from: env.DIGEST_FROM || "CMAC Command Centre <onboarding@resend.dev>",
+      to: [env.DIGEST_TO || "paul.wardle@cmacgroup.com"],
+      subject: total ? `Morning brief — ${total} item(s) need attention` : "Morning brief — all clear",
+      html,
+    }),
+  });
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(sendDigest(env));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/digest/preview") {
+      // Admin-only in-browser preview of the digest email.
+      const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
+      const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceKey) return json({ error: "Not configured (missing SUPABASE_SERVICE_ROLE_KEY)." }, 503);
+      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "") || url.searchParams.get("token") || "";
+      const meRes = await fetch(supabaseUrl + "/auth/v1/user", { headers: { Authorization: "Bearer " + token, apikey: serviceKey } });
+      if (!meRes.ok) return json({ error: "Sign in first, then open this from the app." }, 401);
+      const me = await meRes.json();
+      const profRes = await fetch(supabaseUrl + "/rest/v1/profiles?user_id=eq." + encodeURIComponent(me.id) + "&select=role,status",
+        { headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey } });
+      const p = (profRes.ok ? await profRes.json() : [])[0];
+      if (!p || p.role !== "admin" || p.status !== "approved") return json({ error: "Admins only." }, 403);
+      const doc = await loadWorkspaceDoc(env);
+      if (!doc) return json({ error: "No workspace found." }, 404);
+      return new Response(buildDigest(doc).html, { headers: { "Content-Type": "text/html;charset=utf-8" } });
+    }
 
     if (url.pathname === "/api/ai") {
       if (request.method !== "POST") {

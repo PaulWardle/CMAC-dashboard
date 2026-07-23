@@ -6,6 +6,8 @@
   "name": "cmac-dashboard",
   "compatibility_date": "2024-11-01",
   "main": "worker.js",
+  // Daily exceptions digest: 06:00 UTC = 7am UK in summer (BST).
+  "triggers": { "crons": ["0 6 * * *"] },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

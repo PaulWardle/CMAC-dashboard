@@ -58,18 +58,42 @@ export const store = {
     return readLocal();
   },
 
-  async save(data) {
+  /**
+   * Save-as-you-go with optimistic concurrency. Every document carries a
+   * `rev` counter; the update only applies if the stored rev still matches
+   * `expectedRev`. If another device saved first, nothing is overwritten —
+   * we return { conflict: true, remote } and the app adopts the newer copy.
+   */
+  async save(data, expectedRev) {
     let cloudOk = false;
+    let remote = null;
     if (supabase && (await hasSession())) {
-      const { error } = await supabase
-        .from(TABLE)
-        .upsert(
-          { id: ROW_ID, data, updated_at: new Date().toISOString() },
-          { onConflict: "id" }
-        );
-      cloudOk = !error;
+      const payload = { data, updated_at: new Date().toISOString() };
+      let q = supabase.from(TABLE).update(payload).eq("id", ROW_ID);
+      if (expectedRev != null) q = q.eq("data->>rev", String(expectedRev));
+      const { data: rows, error } = await q.select("id");
+      if (!error && rows && rows.length) {
+        cloudOk = true;
+      } else if (!error) {
+        // Nothing matched: first-ever save, a legacy doc without a rev, or a
+        // genuine conflict. Look at what's actually stored to decide.
+        const { data: cur } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
+        if (!cur) {
+          const { error: insErr } = await supabase.from(TABLE).insert({ id: ROW_ID, ...payload });
+          cloudOk = !insErr;
+        } else if (cur.data && cur.data.rev == null) {
+          const { error: updErr } = await supabase.from(TABLE).update(payload).eq("id", ROW_ID);
+          cloudOk = !updErr;
+        } else {
+          remote = cur.data; // conflict — someone else saved a newer rev
+        }
+      }
+    }
+    if (remote) {
+      writeLocal(remote); // keep the offline mirror on the winning version
+      return { ok: false, conflict: true, remote };
     }
     const localOk = writeLocal(data);
-    return supabase ? cloudOk || localOk : localOk;
+    return { ok: supabase ? cloudOk || localOk : localOk, conflict: false };
   },
 };

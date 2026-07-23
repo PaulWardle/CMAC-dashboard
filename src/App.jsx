@@ -19,6 +19,9 @@ const C = {
 const STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Review","Done","Parked","Cancelled"];
 const OPEN_STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Review"];
 const TYPES = ["Action","Task","Milestone","Risk","Issue","Dependency","Decision","Commitment","Chaser","Follow-up","Idea","Improvement","Information request","Meeting action","Mobilisation action","Board action","Audit action"];
+/* The editor offers only the types that actually behave differently; legacy
+   values on existing items remain valid and selectable on those items. */
+const CORE_TYPES = ["Action","Risk","Issue","Dependency","Decision","Commitment","Idea"];
 const PRIORITIES = ["Critical","High","Medium","Low","Parked"];
 const RAGS = ["Red","Amber","Green"];
 const COUNTRIES = ["UK","Spain","Portugal","Greece","Group"];
@@ -47,6 +50,11 @@ const daysUntil = (s) => { if (!s) return null; return Math.round((new Date(Stri
 const daysSince = (s) => { if (!s) return null; return Math.round((new Date(todayISO()) - new Date(String(s).slice(0,10))) / 86400000); };
 const monthName = () => new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+/* "paul.wardle@cmacgroup.com" → "Paul Wardle" */
+const emailToName = (em) => (String(em || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((s) => s[0].toUpperCase() + s.slice(1)).join(" ")) || "Me";
+/* current user's display name, with legacy-"Me" tolerance in filters */
+const meName = (d) => d.settings.displayName || "Me";
+const isMine = (d, w) => w.owner === meName(d) || w.owner === "Me";
 
 /* ---------- priority ---------- */
 const prioRank = (p) => ({ Critical: 0, High: 1, Medium: 2, Low: 3, Parked: 4 }[p] ?? 5);
@@ -216,7 +224,13 @@ const STYLES = `
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
 .burger { display:none; }
+.tabbar { display:none; }
 @media (max-width: 900px) {
+  .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
+  .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
+  .tabbar button.on { color:#fff; }
+  .tabbar .ticon { font-size:17px; line-height:1; }
+  .tabbar .tdot { position:absolute; margin-left:26px; margin-top:-2px; width:8px; height:8px; border-radius:50%; background:#FD0E33; }
   .burger { display:inline-flex; align-items:center; justify-content:center; background:#112138; color:#fff; border:none; border-radius:9px; width:40px; height:36px; font-size:18px; cursor:pointer; flex:none; }
   .side { position:fixed; top:0; left:-300px; bottom:0; width:280px; min-width:280px; z-index:70; transition:left .22s ease; box-shadow:8px 0 30px rgba(17,33,56,.35); }
   .side.open { left:0; }
@@ -226,7 +240,7 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .topbar { flex-wrap:wrap; gap:8px; padding:8px 12px; }
   .topbar .ttl { font-size:14px; }
   .searchwrap { flex:1 1 100%; order:5; width:100% !important; }
-  .content { padding:12px 12px 64px; }
+  .content { padding:12px 12px 96px; }
   .input, .select, .ta { font-size:16px; }
   .tbl { display:block; overflow-x:auto; -webkit-overflow-scrolling:touch; }
   .grid { grid-template-columns: 1fr !important; }
@@ -399,15 +413,17 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
   const isNew = !item.id;
   const [w, setW] = useState(() => ({
     id: item.id || uid(), title: "", description: "", type: "Action", status: "Inbox", priority: "Medium",
-    owner: "Me", waitingOn: "", project: "", mob: "", workstream: "", country: data.settings.defaultCountry || "UK",
+    owner: meName(data), waitingOn: "", project: "", mob: "", workstream: "", country: data.settings.defaultCountry || "UK",
     client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
     rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50,
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
     confidentiality: "General internal", notes: [], extra: {}, outcome: "", ...JSON.parse(JSON.stringify(item)),
   }));
   const [note, setNote] = useState("");
+  const [more, setMore] = useState(false);
   const set = (k, v) => setW((x) => ({ ...x, [k]: v }));
   const setX = (k, v) => setW((x) => ({ ...x, extra: { ...x.extra, [k]: v } }));
+  const typeOpts = CORE_TYPES.includes(w.type) ? CORE_TYPES : [w.type, ...CORE_TYPES];
   const save = () => {
     if (!w.title.trim()) return alert("A title is required.");
     const out = { ...w, updatedAt: todayISO() };
@@ -424,7 +440,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
         </div>
         <div className="frow" style={{ marginTop: 10 }}>
           <F label="Title" span><input className="input" value={w.title} autoFocus onChange={(e) => set("title", e.target.value)} placeholder="Short, action-led title" /></F>
-          <F label="Type"><select className="select" value={w.type} onChange={(e) => set("type", e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label="Type"><select className="select" value={w.type} onChange={(e) => set("type", e.target.value)}>{typeOpts.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Status"><select className="select" value={w.status} onChange={(e) => set("status", e.target.value)}>{STATUSES.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Manual priority"><select className="select" value={w.priority} onChange={(e) => set("priority", e.target.value)}>{PRIORITIES.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Owner"><input className="input" value={w.owner} onChange={(e) => set("owner", e.target.value)} /></F>
@@ -432,17 +448,29 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Due date"><input type="date" className="input" value={w.due} onChange={(e) => set("due", e.target.value)} /></F>
           <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></F>
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
-          <F label="Workstream"><select className="select" value={w.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((t) => <option key={t}>{t}</option>)}</select></F>
-          <F label="Country"><select className="select" value={w.country} onChange={(e) => set("country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Horizon (priorities board)"><select className="select" value={w.horizon} onChange={(e) => set("horizon", e.target.value)}>{HORIZONS.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Description" span><textarea className="ta" value={w.description} onChange={(e) => set("description", e.target.value)} /></F>
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
+          {more && <>
+            <F label="Workstream"><select className="select" value={w.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="Country"><select className="select" value={w.country} onChange={(e) => set("country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="RAG"><select className="select" value={w.rag} onChange={(e) => set("rag", e.target.value)}><option value="">—</option>{RAGS.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="Confidentiality"><select className="select" value={w.confidentiality} onChange={(e) => set("confidentiality", e.target.value)}>{CONFIDENTIALITY.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="Client"><input className="input" value={w.client} onChange={(e) => set("client", e.target.value)} /></F>
+          </>}
           {(w.status === "Blocked" || w.blocker) && <F label="Blocker / reason" span><input className="input" value={w.blocker} onChange={(e) => set("blocker", e.target.value)} /></F>}
           {(w.status === "Waiting") && <>
             <F label="Last chased"><input type="date" className="input" value={w.lastChased} onChange={(e) => set("lastChased", e.target.value)} /></F>
             <F label="Next chase"><input type="date" className="input" value={w.nextChase} onChange={(e) => set("nextChase", e.target.value)} /></F>
           </>}
           {w.status === "Done" && <F label="Outcome delivered" span><textarea className="ta" value={w.outcome} onChange={(e) => set("outcome", e.target.value)} placeholder="What was actually delivered / the benefit" /></F>}
+        </div>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <button type="button" className="btn sm" onClick={() => setMore((v) => !v)}>{more ? "Fewer options ▲" : "More options ▼"}</button>
+          <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}>
+            <input type="checkbox" checked={!!w.private} onChange={(e) => set("private", e.target.checked)} />
+            Private — hidden from view-only users
+          </label>
         </div>
 
         {w.type === "Risk" && <>
@@ -616,6 +644,30 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
         <Stat n={stale.length} l={"Stale >" + data.settings.staleItem + "d"} tone={stale.length ? "warn" : ""} onClick={() => go("actions")} />
       </div>
 
+      {(() => {
+        const ev = [];
+        open.forEach((w) => { const du = daysUntil(w.due); if (du !== null && du >= 0 && du <= 30) ev.push({ d: w.due, kind: "Due", tone: "#FD0E33", label: w.title, go: () => openItem(w) }); });
+        waiting.forEach((w) => { const nc = daysUntil(w.nextChase); if (w.nextChase && nc >= 0 && nc <= 30) ev.push({ d: w.nextChase, kind: "Chase", tone: "#B45309", label: (w.waitingOn ? w.waitingOn + " — " : "") + w.title, go: () => openItem(w) }); });
+        activeProjects.forEach((p) => { const dm = daysUntil(p.nextMilestoneDate); if (p.nextMilestone && dm !== null && dm >= 0 && dm <= 30) ev.push({ d: p.nextMilestoneDate, kind: "Milestone", tone: "#112138", label: p.nextMilestone + " — " + p.name, go: () => openProject(p.id) }); });
+        activeMobs.forEach((m) => { const dg = daysUntil(m.goLive); if (dg !== null && dg >= 0 && dg <= 30) ev.push({ d: m.goLive, kind: "Go-live", tone: "#FD0E33", label: m.name, go: () => openMob(m.id) }); });
+        { const bd = daysUntil(data.boardDraft?.deadline); if (data.boardDraft?.deadline && bd >= 0 && bd <= 30) ev.push({ d: data.boardDraft.deadline, kind: "Board pack", tone: "#1D5FBF", label: "Board pack submission deadline", go: () => go("board") }); }
+        ev.sort((a, b) => a.d.localeCompare(b.d));
+        if (!ev.length) return null;
+        return (
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="h2" style={{ marginTop: 0 }}>Next 30 days</div>
+            {ev.slice(0, 14).map((e, i) => (
+              <div key={i} className="checkline" style={{ cursor: "pointer", alignItems: "center" }} onClick={e.go}>
+                <span className="mono" style={{ width: 52 }}>{fmtD(e.d).slice(0, 5)}</span>
+                <span className="chip" style={{ color: e.tone, borderColor: e.tone + "44", flex: "none" }}>{e.kind}</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.label}</span>
+                <span className="mono" style={{ flex: "none" }}>{daysUntil(e.d)}d</span>
+              </div>))}
+            {ev.length > 14 && <div className="sub" style={{ margin: "6px 0 0" }}>{ev.length - 14} more within 30 days.</div>}
+          </div>
+        );
+      })()}
+
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 14, alignItems: "start" }}>
         {(show("Today") || show("This week") || show("Executive")) && <div className="card">
           <div className="h2" style={{ marginTop: 0 }}>My top five priorities</div>
@@ -702,7 +754,7 @@ function Capture({ data, mutate, openItem }) {
   const quickAdd = () => {
     if (!text.trim()) return;
     mutate((d) => {
-      d.workItems.push({ id: uid(), title: text.trim().slice(0, 140), description: text.trim(), type: "Action", status: "Inbox", priority: "Medium", owner: "Me", waitingOn: "", project: "", mob: "", workstream: "", country: d.settings.defaultCountry,
+      d.workItems.push({ id: uid(), title: text.trim().slice(0, 140), description: text.trim(), type: "Action", status: "Inbox", priority: "Medium", owner: meName(d), waitingOn: "", project: "", mob: "", workstream: "", country: d.settings.defaultCountry,
         client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: "", blocker: "",
         horizon: "Next", rank: 50, flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "General internal", notes: [], extra: {}, outcome: "" });
       return d;
@@ -718,7 +770,7 @@ function Capture({ data, mutate, openItem }) {
         const proj = d.projects.find((x) => x.name === p.project);
         const mob = d.mobs.find((x) => x.name === p.mobilisation);
         d.workItems.push({ id: uid(), title: p.title || "Untitled", description: p.description || "", type: TYPES.includes(p.type) ? p.type : "Action",
-          status: p.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(p.priority) ? p.priority : "Medium", owner: p.owner || "Me", waitingOn: p.waitingOn || "",
+          status: p.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(p.priority) ? p.priority : "Medium", owner: p.owner || meName(d), waitingOn: p.waitingOn || "",
           project: proj ? proj.id : "", mob: mob ? mob.id : "", workstream: p.workstream || "", country: COUNTRIES.includes(p.country) ? p.country : d.settings.defaultCountry,
           client: "", due: p.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: p.nextAction || "",
           blocker: "", horizon: "Next", rank: 50, flags: { board: !!p.flags?.board, coo: !!p.flags?.coo, news: !!p.flags?.news, groupWeekly: false, ukWeekly: false },
@@ -841,7 +893,7 @@ function Priorities({ data, mutate, openItem }) {
           {open.filter((w) => w.status === "Waiting" && (!w.nextChase || daysUntil(w.nextChase) <= 0)).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title} <span className="chip">{w.waitingOn}</span></div>)}
         </div>
         <div className="card"><div className="flab">Delegation candidates (owned by me, not started)</div>
-          {open.filter((w) => w.owner === "Me" && ["Planned", "Inbox"].includes(w.status) && w.priority !== "Critical").slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
+          {open.filter((w) => isMine(data, w) && ["Planned", "Inbox"].includes(w.status) && w.priority !== "Critical").slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
         </div>
       </div>
     </div>
@@ -855,8 +907,8 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
   const [f, setF] = useState({ q: "", owner: "", project: "", country: "", type: "", view: "All" });
   const cols = ["Inbox", "Planned", "In Progress", "Waiting", "Blocked", "Review", "Done"];
   let rows = data.workItems.filter((w) => w.status !== "Cancelled" && w.status !== "Parked");
-  if (f.view === "My actions") rows = rows.filter((w) => w.owner === "Me");
-  if (f.view === "Delegated") rows = rows.filter((w) => w.owner !== "Me");
+  if (f.view === "My actions") rows = rows.filter((w) => isMine(data, w));
+  if (f.view === "Delegated") rows = rows.filter((w) => w.owner && !isMine(data, w));
   if (f.view === "Critical") rows = rows.filter((w) => w.priority === "Critical");
   if (f.view === "Overdue") rows = rows.filter(isOverdue);
   if (f.q) rows = rows.filter((w) => (w.title + " " + w.description).toLowerCase().includes(f.q.toLowerCase()));
@@ -1497,13 +1549,50 @@ function ReportWorkspace({ data, mutate, kind }) {
     const md = lines.join("\n");
     copyText(md); alert("Draft copied to clipboard as Markdown — paste into Word / email." + (isBoard ? " Once the pack is out, take a JSON backup from Settings." : ""));
   };
+  const printDraft = () => {
+    const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let body = "";
+    sections.forEach(([k, label]) => {
+      const items = srcFor(k).filter((s) => !draft.excluded.includes(k + ":" + s.id));
+      if (!draft.commentary[k] && !items.length) return;
+      body += `<h2>${esc(label)}<span class="dot">.</span></h2>`;
+      if (draft.commentary[k]) body += `<p class="comm">${esc(draft.commentary[k])}</p>`;
+      if (items.length) body += "<ul>" + items.map((s) => `<li>${esc(draft.overrides[k + ":" + s.id] || s.text)}</li>`).join("") + "</ul>";
+    });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(isBoard ? "Board operations update" : "COO update")} — ${esc(draft.period)}</title>
+<style>
+  @page { margin: 18mm 16mm; }
+  body { font-family: 'Montserrat','Segoe UI',system-ui,sans-serif; color:#112138; font-size:11.5pt; line-height:1.55; margin:0; }
+  .head { display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #112138; padding-bottom:10px; margin-bottom:6px; }
+  .head img { height:34px; }
+  h1 { font-size:19pt; font-weight:800; letter-spacing:-.3px; margin:14px 0 2px; }
+  .meta { color:#5C6675; font-size:9.5pt; margin-bottom:14px; }
+  h2 { font-size:10pt; font-weight:900; color:#FD0E33; text-transform:uppercase; letter-spacing:1.6px; margin:20px 0 6px; page-break-after:avoid; }
+  h2 .dot { color:#112138; }
+  p.comm { margin:0 0 6px; font-weight:600; }
+  ul { margin:4px 0 0 18px; padding:0; } li { margin-bottom:5px; }
+  .foot { margin-top:26px; color:#8A93A1; font-size:8.5pt; border-top:1px solid #E1E7EC; padding-top:8px; }
+</style></head><body>
+<div class="head"><img src="${window.location.origin}/cmac-logo.png" alt="cmac." /><span style="font-size:8.5pt;letter-spacing:2px;color:#5C6675;font-weight:800;">OPERATIONS COMMAND CENTRE</span></div>
+<h1>${esc(isBoard ? "Board operations update" : "COO update")}<span style="color:#FD0E33">.</span></h1>
+<div class="meta">${esc(draft.period)} · Prepared ${fmtD(todayISO())} · Paul Wardle</div>
+${body}
+<div class="foot">Generated from the CMAC Operations Command Centre.</div>
+<script>window.addEventListener('load',function(){setTimeout(function(){window.print();},350);});</` + `script></body></html>`;
+    const win = window.open("", "_blank");
+    if (!win) return alert("Your browser blocked the print window — allow pop-ups for this site.");
+    win.document.write(html); win.document.close();
+  };
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <h2 className="h1">{isBoard ? "Board Pack workspace" : "COO Update"}</h2>
         <input className="input" style={{ width: 180 }} value={draft.period} onChange={(e) => upd((x) => { x.period = e.target.value; })} />
         {isBoard && <><label className="flab" style={{ margin: 0 }}>Submission deadline</label><input type="date" className="input" style={{ width: 140 }} value={draft.deadline || ""} onChange={(e) => upd((x) => { x.deadline = e.target.value; })} /></>}
-        <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={generate}>Generate & copy draft</button>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button className="btn sm" onClick={printDraft}>Print / PDF</button>
+          <button className="btn pri sm" onClick={generate}>Generate & copy draft</button>
+        </span>
       </div>
       <p className="sub">{isBoard ? "Monthly cycle — first week of each month. " : ""}Suggested content comes from flagged updates, completed work, projects, mobilisations, risks and decisions. Untick anything to exclude it; edit wording where needed; add your own commentary per section.</p>
       {isBoard && draft.deadline && daysUntil(draft.deadline) <= 5 && <div className={daysUntil(draft.deadline) <= 2 ? "warnbox" : "notebox"}>Board pack deadline {fmtD(draft.deadline)} — {daysUntil(draft.deadline)} day(s) away.</div>}
@@ -1941,6 +2030,8 @@ export default function App({ auth }) {
   const [roNotice, setRoNotice] = useState(false);
   const [pendingReqs, setPendingReqs] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
+  const lastSynced = useRef(0);
   const canEdit = !auth || auth.canEdit;
 
   // Admin: watch for access requests awaiting approval.
@@ -1958,10 +2049,49 @@ export default function App({ auth }) {
     (async () => {
       let d = null;
       try { d = await store.load(); } catch (e) { }
-      if (!d) { d = seedData(); if (canEdit) { const ok = await store.save(d); if (!ok) setStorageWarn(true); } }
-      else { const s = stripDemo(d); if (s.changed) { d = s.data; if (canEdit) await store.save(d); } }
+      let dirty = false;
+      if (!d) { d = seedData(); dirty = true; }
+      else { const s = stripDemo(d); if (s.changed) { d = s.data; dirty = true; } }
+      // Identity: owners are real names in a shared workspace. Resolve the
+      // signed-in user's display name and migrate any legacy "Me" owners.
+      const displayName = auth && auth.mode === "cloud" ? emailToName(auth.email) : "Me";
+      if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
+      if (canEdit && displayName !== "Me") {
+        d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
+      }
+      // View-only accounts never see private items (also excluded from search/AI
+      // because they simply aren't in the loaded document).
+      if (auth && auth.mode === "cloud" && !auth.canEdit) {
+        d = { ...d, workItems: d.workItems.filter((w) => !w.private) };
+      }
+      lastSynced.current = d.rev || 0;
       setData(d);
+      if (dirty && canEdit) {
+        const res = await store.save(d, null);
+        if (!res.ok && !res.conflict) setStorageWarn(true);
+        else lastSynced.current = d.rev || 0;
+      }
     })();
+  }, []);
+
+  // Save-as-you-go companion: when the app regains focus (phone unlock, tab
+  // switch), pull the latest copy if another device has saved a newer one.
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState && document.visibilityState !== "visible") return;
+      try {
+        const remote = await store.load();
+        if (remote && (remote.rev || 0) > ((dataRef.current && dataRef.current.rev) || 0)) {
+          lastSynced.current = remote.rev || 0;
+          setData(auth && auth.mode === "cloud" && !auth.canEdit
+            ? { ...remote, workItems: remote.workItems.filter((w) => !w.private) }
+            : remote);
+        }
+      } catch (e) { }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); };
   }, []);
 
   useEffect(() => {
@@ -1974,9 +2104,20 @@ export default function App({ auth }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (!dataRef.current) return;
-      const ok = store.available ? await store.save(dataRef.current) : false;
-      if (ok) { setSavedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })); setStorageWarn(false); }
-      else setStorageWarn(true);
+      const res = await store.save(dataRef.current, lastSynced.current);
+      if (res.conflict && res.remote) {
+        // Another device saved first. Never overwrite — adopt the newer copy.
+        lastSynced.current = res.remote.rev || 0;
+        setData(res.remote);
+        setSyncNote("This workspace was updated on another device — now showing the latest version. Re-apply your last change if it's missing.");
+        setStorageWarn(false);
+      } else if (res.ok) {
+        lastSynced.current = (dataRef.current && dataRef.current.rev) || 0;
+        setSavedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
+        setStorageWarn(false);
+      } else {
+        setStorageWarn(true);
+      }
     }, 700);
   }, []);
 
@@ -1986,6 +2127,7 @@ export default function App({ auth }) {
     if (!canEdit) { setRoNotice(true); return; }
     setData((d) => {
       const nd = fn(JSON.parse(JSON.stringify(d)));
+      nd.rev = (nd.rev || 0) + 1;
       if (activityText) nd.activity = [...(nd.activity || []).slice(-199), { ts: Date.now(), text: activityText }];
       return nd;
     });
@@ -2083,10 +2225,22 @@ export default function App({ auth }) {
         <div className="content">
           {storageWarn && <div className="warnbox">Persistent storage isn't available right now. Your changes may be lost when you leave — use Settings → Export to take a JSON backup.</div>}
           {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Ask Paul Wardle if you need editing rights. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
+          {syncNote && <div className="notebox">{syncNote} <span className="linkish" onClick={() => setSyncNote("")}>Dismiss</span></div>}
           {pendingReqs > 0 && <div className="warnbox">{pendingReqs} access request{pendingReqs > 1 ? "s" : ""} awaiting your approval. <span className="linkish" onClick={() => go("settings")}>Review in Settings → Team & access</span></div>}
           {view}
         </div>
       </div>
+      <nav className="tabbar">
+        {[["command", "⌂", "Home"], ["capture", "＋", "Capture"], ["priorities", "◎", "Priorities"], ["waiting", "⏳", "Waiting"]].map(([k, icon, label]) => (
+          <button key={k} className={nav === k ? "on" : ""} onClick={() => go(k)}>
+            {k === "command" && alertCount > 0 && <span className="tdot" />}
+            <span className="ticon">{icon}</span>{label}
+          </button>))}
+        <button onClick={() => setNavOpen(true)}>
+          {pendingReqs > 0 && <span className="tdot" />}
+          <span className="ticon">☰</span>Menu
+        </button>
+      </nav>
       {editItem !== null && <WorkItemModal data={data} item={editItem} onSave={saveItem} onDelete={deleteItem} onClose={() => setEditItem(null)} />}
       <AskDialog req={ask} onResolve={resolveAsk} />
     </div>
