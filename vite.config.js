@@ -33,7 +33,7 @@ function devAiProxy(env) {
             const apiKey = process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY;
             if (!apiKey) return send(503, { error: "ANTHROPIC_API_KEY is not set in your local environment (.env)." });
             if (!Array.isArray(messages) || !messages.length) return send(400, { error: "messages are required" });
-            const model = process.env.AI_MODEL || env.AI_MODEL || "claude-sonnet-5";
+            const model = process.env.AI_MODEL || env.AI_MODEL || "claude-opus-4-8";
             const payload = { model, max_tokens: maxTokens, messages };
             if (parsed.system) payload.system = String(parsed.system).slice(0, 60000);
             if (Array.isArray(parsed.tools) && parsed.tools.length) payload.tools = parsed.tools.slice(0, 8);

@@ -1,4 +1,4 @@
 # Secrets for `wrangler pages dev` (local Cloudflare Functions runtime).
 # Copy to `.dev.vars` (git-ignored). Mirrors the server-side vars from .env.
 ANTHROPIC_API_KEY=
-# AI_MODEL=claude-sonnet-5
+# AI_MODEL=claude-opus-4-8

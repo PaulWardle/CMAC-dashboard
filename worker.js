@@ -33,7 +33,7 @@ async function handleAI(request, env) {
     return json({ error: "AI is not configured on the server (missing ANTHROPIC_API_KEY)." }, 503);
   }
 
-  const model = env.AI_MODEL || "claude-sonnet-5";
+  const model = env.AI_MODEL || "claude-opus-4-8";
 
   // Forward only known-safe fields. `system` and `tools` power the in-app
   // assistant; `stream` turns on live token streaming (SSE passthrough).
