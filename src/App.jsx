@@ -1729,7 +1729,10 @@ const COO_SECTIONS = [
   ["resourcing", "Resourcing", ["Staffing levels", "Overtime costs", "Recruitment planning", "Turnover"]],
   ["profit", "Profit", ["Operational performance — KPIs / OKRs / service levels", "Targets vs actuals", "Variance & impact", "Goals, targets, actions", "Departmental budget"]],
   ["opsportal", "Ops Portal usage", ["Successes", "Challenges", "Offline working", "Blockers", "Dependencies"]],
-  ["priorities", "Priorities", ["Current focuses", "Achievements / wins", "Challenges / blockers / dependencies", "Project updates"]],
+  ["priorities", "Priorities", ["Current focuses — what has your attention right now"]],
+  ["wins", "Wins", ["Achievements worth his airtime", "Progress he should hear about"]],
+  ["challenges", "Challenges & blockers", ["What's stuck, why, and what it needs", "Dependencies on others"]],
+  ["projects", "Projects", ["Position, RAG and next milestone per active project"]],
   ["mobs", "Mobilisations", ["Readiness & go-lives", "Slippage or client risk"]],
   ["decisions", "Decisions needed", ["What you need from him, by when"]],
   ["aob", "AOB", ["Risks", "Escalations", "Support needed", "Budget", "Misc"]],
@@ -1751,21 +1754,25 @@ function ReportWorkspace({ data, mutate, kind }) {
   const srcFor = (k) => {
     if (isBoard) return boardSources(data, k);
     const open = data.workItems.filter((w) => OPEN_STATUSES.includes(w.status));
-    if (k === "priorities") return [
-      ...open.filter((w) => w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 8).map((w) => ({ id: "w" + w.id, text: `Focus: ${w.title}${w.due ? " — due " + fmtD(w.due) : ""}` })),
-      ...data.updates.filter((u) => u.flags.coo).map((u) => ({ id: "u" + u.id, text: `Win: ${u.title}: ${u.summary}` })),
-      ...data.workItems.filter((w) => w.status === "Done" && w.flags.coo && daysSince(w.completed) <= 14).map((w) => ({ id: "wd" + w.id, text: `Win: ${w.title}${w.outcome ? " — " + w.outcome : ""}` })),
-      ...open.filter((w) => w.status === "Blocked").slice(0, 6).map((w) => ({ id: "wb" + w.id, text: `Blocked: ${w.title}${w.blocker ? " — " + w.blocker : ""}` })),
-      ...data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map((p) => ({ id: "p" + p.id, text: `${p.name} (${p.rag || "no RAG"}, ${p.progress ?? 0}%): ${p.position || "no position recorded"}` })),
+    if (k === "priorities") return open.filter((w) => w.horizon === "Now" && w.status !== "Blocked")
+      .sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 8)
+      .map((w) => ({ id: "w" + w.id, text: `${w.title}${w.due ? " — due " + fmtD(w.due) : ""}` }));
+    if (k === "wins") return [
+      ...data.updates.filter((u) => u.flags.coo && (!u.rag || u.rag === "Green")).map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
+      ...data.workItems.filter((w) => w.status === "Done" && w.flags.coo && daysSince(w.completed) <= 14).map((w) => ({ id: "wd" + w.id, text: `${w.title}${w.outcome ? " — " + w.outcome : ""}` })),
     ];
+    if (k === "challenges") return [
+      ...open.filter((w) => w.status === "Blocked").slice(0, 8).map((w) => ({ id: "wb" + w.id, text: `Blocked: ${w.title}${w.blocker ? " — " + w.blocker : ""}` })),
+      ...open.filter((w) => w.type === "Issue" && ["Critical", "High"].includes(w.priority)).slice(0, 6).map((w) => ({ id: "wi" + w.id, text: `Issue: ${w.title}` })),
+      ...data.updates.filter((u) => u.flags.coo && u.rag && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
+    ];
+    if (k === "projects") return boardSources(data, "projects");
     if (k === "mobs") return boardSources(data, "mobs");
     if (k === "decisions") return open.filter((w) => w.type === "Decision")
       .sort((a, b) => (b.flags?.coo ? 1 : 0) - (a.flags?.coo ? 1 : 0))
       .map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}${w.extra?.recommended ? ". Recommended: " + w.extra.recommended : ""}` }));
     if (k === "aob") return [
       ...open.filter((w) => w.type === "Risk" && (w.flags.coo || ["Critical", "High"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `Risk: ${w.title}${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : ""}` })),
-      ...data.updates.filter((u) => u.flags.coo && u.rag && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `Concern: ${u.title}: ${u.summary}` })),
-      ...open.filter((w) => w.type === "Issue" && ["Critical", "High"].includes(w.priority)).slice(0, 6).map((w) => ({ id: "wi" + w.id, text: `Issue: ${w.title}` })),
       ...open.filter((w) => w.status === "Waiting" && ["Critical", "High"].includes(w.priority)).slice(0, 5).map((w) => ({ id: "we" + w.id, text: `Possible escalation: ${w.title} — waiting on ${w.waitingOn || "?"}` })),
     ];
     const kws = COO_KEYWORDS[k] || [];
