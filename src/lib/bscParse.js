@@ -35,10 +35,36 @@ function inferMeta(name, target, values) {
   return { unit, agg, dir: lowerBetter ? "low" : "high" };
 }
 
+/* The workbook's Guidance Page: Area | Metric | Definition rows become the
+   in-app methodology reference. */
+function parseGuidance(rows) {
+  let hi = -1, aCol = -1, mCol = -1, dCol = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const ai = r.findIndex((c) => String(c || "").trim().toLowerCase() === "area");
+    const mi = r.findIndex((c) => String(c || "").trim().toLowerCase() === "metric");
+    if (ai !== -1 && mi !== -1) {
+      hi = i; aCol = ai; mCol = mi;
+      const di = r.findIndex((c) => /definition|guidance/i.test(String(c || "")));
+      dCol = di !== -1 ? di : Math.max(ai, mi) + 1;
+      break;
+    }
+  }
+  if (hi === -1) return null;
+  const out = [];
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const area = String(r[aCol] || "").trim(), metric = String(r[mCol] || "").trim(), text = String(r[dCol] || "").trim();
+    if (metric && text) out.push({ area, metric, text });
+  }
+  return out.length ? out : null;
+}
+
 export function parseScorecardWorkbook(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
   const entities = [];
   const warnings = [];
+  let guidance = [];
   for (const sheetName of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: null });
     const cellStr = (r, i) => (r && r[i] !== null && r[i] !== undefined ? String(r[i]).trim() : "");
@@ -86,9 +112,13 @@ export function parseScorecardWorkbook(arrayBuffer) {
     }
     const total = categories.reduce((s, c) => s + c.metrics.length, 0);
     if (total > 0) entities.push({ id: uid(), name: sheetName, categories });
-    else if (!/guidance/i.test(sheetName)) warnings.push(`Sheet "${sheetName}" had no recognisable scorecard rows — skipped.`);
+    else {
+      const g = parseGuidance(rows);
+      if (g) guidance = guidance.concat(g);
+      else if (!/guidance/i.test(sheetName)) warnings.push(`Sheet "${sheetName}" had no recognisable scorecard rows — skipped.`);
+    }
   }
   if (!entities.length) throw new Error("No scorecard structure recognised in this workbook. Expected category headers with Month/Target rows like the Balanced Scorecard template.");
-  return { entities, warnings };
+  return { entities, guidance, warnings };
 }
 

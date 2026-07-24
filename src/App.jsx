@@ -341,6 +341,10 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .kpi-row { cursor:pointer; }
 .kpi-row:hover td { background:#F4F7FA; }
 .kpi-row.on td { background:#EDF3FF; }
+.kpi-prev { cursor:pointer; }
+.kpi-prev td { padding:3px 8px 5px; border-bottom:1px solid #EEF1F4; text-align:right; white-space:nowrap; font-weight:500; font-size:10px; color:#8A93A1; background:#FAFBFC; }
+.kpi-prev td.nm { text-align:left; padding-left:9px; border-left:4px solid #E4E9ED; font-weight:700; letter-spacing:.5px; }
+.kpi-prev td.ytd { background:#F1F5FA; font-weight:700; }
 @media (max-width: 900px) {
   .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
   .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
@@ -488,21 +492,6 @@ function computeAlerts(d) {
     if (daysSince(m.updatedAt) > s.staleMob) push(2, `Mobilisation not updated for ${daysSince(m.updatedAt)}d — ${m.name}`, "mob", m.id);
     (m.checklist || []).filter((c) => c.signOff && !c.signedOff && daysUntil(c.due) !== null && daysUntil(c.due) <= 7).forEach((c) => push(2, `Sign-off outstanding — ${c.requirement} (${m.name})`, "mob", m.id));
   });
-  // Balanced scorecard: off-target and slipping measures on the lead entity.
-  const kpiLead = (d.kpi?.entities || [])[0];
-  if (kpiLead) {
-    let kn = 0;
-    kpiLead.categories.forEach((c) => c.metrics.forEach((m) => {
-      if (m.target === null || m.target === undefined || kn >= 6) return;
-      const li = lastIdx(m);
-      if (li < 0) return;
-      const yv = ytd(m);
-      const cur = m.cur[li], prevM = li > 0 ? m.cur[li - 1] : null;
-      const worse = prevM !== null && (m.dir === "low" ? cur > prevM : cur < prevM);
-      if (ragYtd(m) === "R") { push(2, `KPI off target — ${m.name}: YTD ${fmtVal(m, yv, true)} vs target ${fmtVal(m, ytdTarget(m), true)}`, "kpi"); kn++; }
-      else if (worse && ragFor(m, cur) !== "G") { push(1, `KPI slipping — ${m.name}: ${MONTHS[li]} ${fmtVal(m, cur, true)}, worse than ${fmtVal(m, prevM, true)}`, "kpi"); kn++; }
-    }));
-  }
   const inboxOld = d.workItems.filter((w) => w.status === "Inbox" && daysSince(w.created) > 7).length;
   if (inboxOld) push(1, `${inboxOld} inbox item${inboxOld > 1 ? "s" : ""} unprocessed for over 7 days`, "capture");
   const dismissed = new Set((d.dismissedAlerts || []).filter((x) => x.date === todayISO()).map((x) => x.key));
@@ -733,13 +722,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const activeProjects = data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage));
   const ragCount = (r) => activeProjects.filter((p) => p.rag === r).length;
   const activeMobs = data.mobs.filter((m) => m.stage !== "Closed");
-  const kpiLead = (data.kpi?.entities || [])[0];
-  const kpiCounts = { G: 0, A: 0, R: 0 };
-  const kpiReds = [];
-  if (kpiLead) kpiLead.categories.forEach((c) => c.metrics.forEach((m) => {
-    const r = ragYtd(m);
-    if (r) { kpiCounts[r]++; if (r === "R") kpiReds.push(m); }
-  }));
   const milestones = [...activeProjects.filter((p) => p.nextMilestone && p.nextMilestoneDate).map((p) => ({ d: p.nextMilestoneDate, t: p.nextMilestone + " — " + p.name, go: () => openProject(p.id) })),
     ...activeMobs.map((m) => ({ d: m.goLive, t: "Go-live — " + m.name, go: () => openMob(m.id) }))].filter((x) => x.d && daysUntil(x.d) >= -1).sort((a, b) => a.d.localeCompare(b.d)).slice(0, 6);
   const dismiss = (key) => mutate((d) => { d.dismissedAlerts = [...(d.dismissedAlerts || []), { key, date: todayISO() }]; return d; }, null);
@@ -748,7 +730,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
     else if (a.nav === "project") openProject(a.id);
     else if (a.nav === "mob") openMob(a.id);
     else if (a.nav === "capture") go("capture");
-    else if (a.nav === "kpi") go("kpis");
   };
   const show = (k) => focus === "All" || focus === k;
   return (
@@ -833,20 +814,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
               <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>{h.label}</span>
             </div>); })}
         </div>}
-        {(show("Executive") || show("This week")) && kpiLead && (kpiCounts.G + kpiCounts.A + kpiCounts.R) > 0 && <div className="card">
-          <div className="h2" style={{ marginTop: 0 }}>SLA & KPIs — {kpiLead.name}</div>
-          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-            <KpiDonut counts={kpiCounts} />
-            <div style={{ flex: 1, fontSize: 12.5, minWidth: 0 }}>
-              <b>{kpiCounts.G} on target · {kpiCounts.A} close · {kpiCounts.R} off target</b> <span style={{ color: "#8A93A1" }}>(YTD)</span>
-              {kpiReds.slice(0, 3).map((m) => (
-                <div key={m.id} style={{ color: "#FD0E33", fontWeight: 700, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  ▾ {m.name} — {fmtVal(m, ytd(m), true)} vs {fmtVal(m, ytdTarget(m), true)}
-                </div>))}
-              <div className="linkish" style={{ marginTop: 4 }} onClick={() => go("kpis")}>Open scorecard →</div>
-            </div>
-          </div>
-        </div>}
         {(show("Mobilisations") || show("Executive")) && <div className="card">
           <div className="h2" style={{ marginTop: 0 }}>Mobilisation readiness</div>
           {activeMobs.length === 0 && <div className="sub">No active mobilisations.</div>}
@@ -917,7 +884,7 @@ function Capture({ data, mutate, openItem }) {
           const out = parseScorecardWorkbook(await f.arrayBuffer());
           const ok = await askConfirm(`"${f.name}" looks like the Balanced Scorecard (${out.entities.length} scorecard tab(s)). Import it into SLA & KPIs, replacing the current scorecard numbers? Cancel to attach it here for AI capture instead.`);
           if (ok) {
-            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
+            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities, guidance: out.guidance || [] }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
             continue;
           }
         } catch (e) { /* not a scorecard workbook — treat as a normal attachment */ }
@@ -1829,12 +1796,20 @@ function KpiPage({ data, mutate, auth }) {
   const [sel, setSel] = useState(null);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef(null);
-  const ent = kpi.entities.find((e) => e.id === entId) || kpi.entities[0];
+  const showMethod = entId === "__method";
+  const ent = showMethod ? null : kpi.entities.find((e) => e.id === entId) || kpi.entities[0];
   const allMetrics = ent ? ent.categories.flatMap((c) => c.metrics) : [];
   const counts = { G: 0, A: 0, R: 0 };
   allMetrics.forEach((m) => { const r = ragYtd(m); if (r) counts[r]++; });
   const reds = allMetrics.filter((m) => ragYtd(m) === "R");
   const selMetric = allMetrics.find((m) => m.id === sel);
+  const curYear = kpi.year || new Date().getFullYear();
+  const prevYear = curYear - 1;
+  const ytdPrev = (m) => m.prev ? ytd({ agg: m.agg, cur: m.prev }) : null;
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const guidanceFor = (m) => (kpi.guidance || []).find((x) => { const a = norm(x.metric), b = norm(m.name); return a.length > 3 && (b.includes(a) || a.includes(b)); });
+  const guideAreas = [];
+  (kpi.guidance || []).forEach((g) => { let a = guideAreas.find((x) => x.name === g.area); if (!a) { a = { name: g.area, rows: [] }; guideAreas.push(a); } a.rows.push(g); });
 
   const importFile = async (f) => {
     if (!f) return;
@@ -1848,7 +1823,7 @@ function KpiPage({ data, mutate, auth }) {
         (out.warnings.length ? "\n\n" + out.warnings.join("\n") : "") +
         "\n\nThis replaces the current scorecard numbers (nothing else is touched).");
       if (ok) {
-        mutate((d) => { d.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities }; return d; }, "Balanced Scorecard imported: " + f.name);
+        mutate((d) => { d.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities, guidance: out.guidance || [] }; return d; }, "Balanced Scorecard imported: " + f.name);
         setSel(null); setEntId("");
       }
     } catch (e) { alert("Could not import that workbook: " + (e.message || e)); }
@@ -1872,7 +1847,7 @@ function KpiPage({ data, mutate, auth }) {
           {canEdit && <button className="btn pri sm" disabled={importing} onClick={() => fileRef.current?.click()}>{importing ? "Importing…" : "⇪ Import scorecard (.xlsx)"}</button>}
         </span>
       </div>
-      {!ent ? (
+      {(!ent && !showMethod) ? (
         <div className="card" style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>No scorecard loaded yet</div>
           <div className="sub" style={{ maxWidth: 520, margin: "0 auto" }}>
@@ -1886,7 +1861,25 @@ function KpiPage({ data, mutate, auth }) {
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "4px 0 10px" }}>
             {kpi.entities.map((e) => (
               <button key={e.id} className={"btn sm" + ((ent && ent.id === e.id) ? " pri" : "")} onClick={() => { setEntId(e.id); setSel(null); }}>{e.name}</button>))}
+            <button className={"btn sm" + (showMethod ? " pri" : "")} onClick={() => { setEntId("__method"); setSel(null); }}>Methodology</button>
           </div>
+          {showMethod && (
+            <div className="card">
+              <div className="h2" style={{ marginTop: 0 }}>Methodology & guidance</div>
+              {!guideAreas.length && <div className="sub">No guidance loaded — re-import the scorecard workbook and its Guidance Page sheet fills this section automatically.</div>}
+              {guideAreas.map((a) => (
+                <div key={a.name} style={{ marginBottom: 12 }}>
+                  <div style={{ background: "#112138", color: "#fff", fontWeight: 800, fontSize: 10.5, letterSpacing: "1.2px", textTransform: "uppercase", padding: "6px 12px", borderRadius: 6 }}>
+                    <span style={{ color: "#FD0E33" }}>■</span> {a.name}
+                  </div>
+                  {a.rows.map((g, i) => (
+                    <div key={i} style={{ display: "flex", gap: 12, padding: "7px 4px", borderBottom: "1px solid #EEF1F4", fontSize: 12.5 }}>
+                      <div style={{ width: 210, flex: "none", fontWeight: 700 }}>{g.metric}</div>
+                      <div style={{ flex: 1, color: "#3D4756" }}>{g.text}</div>
+                    </div>))}
+                </div>))}
+            </div>)}
+          {!showMethod && ent && <>
           <div className="card" style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
             <KpiDonut counts={counts} />
             <div style={{ flex: 1, minWidth: 220 }}>
@@ -1903,14 +1896,23 @@ function KpiPage({ data, mutate, auth }) {
                   <React.Fragment key={c.name}>
                     <tr className="kpi-cat"><td colSpan={15}><span className="sq">■</span> {c.name}</td></tr>
                     {c.metrics.map((m) => {
-                      const yv = ytd(m); const rag = ragYtd(m);
+                      const yv = ytd(m); const rag = ragYtd(m); const pv = ytdPrev(m);
                       return (
-                        <tr key={m.id} className={"kpi-row " + rag + (sel === m.id ? " on" : "")} onClick={() => setSel(sel === m.id ? null : m.id)}>
-                          <td className="nm">{m.name}</td>
-                          <td className="tgt">{m.target !== null && m.target !== undefined ? fmtVal(m, m.target, true) : "—"}</td>
-                          {MONTHS.map((mo, i) => <td key={mo} style={m.cur[i] === null ? { color: "#B9C1CC" } : null}>{fmtVal(m, m.cur[i], true)}</td>)}
-                          <td className="ytd">{fmtVal(m, yv, true)}</td>
-                        </tr>);
+                        <React.Fragment key={m.id}>
+                          <tr className={"kpi-row " + rag + (sel === m.id ? " on" : "")} onClick={() => setSel(sel === m.id ? null : m.id)}>
+                            <td className="nm">{m.name}</td>
+                            <td className="tgt">{m.target !== null && m.target !== undefined ? fmtVal(m, m.target, true) : "—"}</td>
+                            {MONTHS.map((mo, i) => <td key={mo} style={m.cur[i] === null ? { color: "#B9C1CC" } : null}>{fmtVal(m, m.cur[i], true)}</td>)}
+                            <td className="ytd">{fmtVal(m, yv, true)}</td>
+                          </tr>
+                          {m.prev && (
+                            <tr className="kpi-prev" onClick={() => setSel(sel === m.id ? null : m.id)}>
+                              <td className="nm">{prevYear}</td>
+                              <td />
+                              {MONTHS.map((mo, i) => <td key={mo}>{fmtVal(m, m.prev[i], true)}</td>)}
+                              <td className="ytd">{fmtVal(m, pv, true)}</td>
+                            </tr>)}
+                        </React.Fragment>);
                     })}
                   </React.Fragment>))}
               </tbody>
@@ -1920,10 +1922,11 @@ function KpiPage({ data, mutate, auth }) {
             <div className="card" style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <div className="h2" style={{ margin: 0, flex: 1 }}>{selMetric.name}</div>
-                <span className="chip">2026 <span style={{ display: "inline-block", width: 10, height: 10, background: "#112138", borderRadius: 2, marginLeft: 4 }} /></span>
+                <span className="chip">{curYear} <span style={{ display: "inline-block", width: 10, height: 10, background: "#112138", borderRadius: 2, marginLeft: 4 }} /></span>
                 <span className="chip">Prior yr <span style={{ display: "inline-block", width: 10, height: 10, background: "#C6CDD8", borderRadius: 2, marginLeft: 4 }} /></span>
                 {selMetric.target !== null && <span className="chip">Target <span style={{ color: "#FD0E33" }}>- - -</span></span>}
               </div>
+              {guidanceFor(selMetric) && <div className="notebox" style={{ margin: "8px 0 4px" }}><b>Methodology:</b> {guidanceFor(selMetric).text}</div>}
               <KpiChart metric={selMetric} />
               {canEdit && (
                 <>
@@ -1954,6 +1957,7 @@ function KpiPage({ data, mutate, auth }) {
                   </div>
                 </>)}
             </div>)}
+          </>}
         </>
       )}
     </div>
@@ -2130,6 +2134,12 @@ function ReportWorkspace({ data, mutate }) {
           body += `<tr class="rag${rag}"><td class="nm">${esc(m.name)}</td><td class="tg">${m.target !== null && m.target !== undefined ? esc(fmtVal(m, m.target, true)) : "—"}</td>` +
             m.cur.map((v) => `<td>${v === null ? '<span class="mut">—</span>' : esc(fmtVal(m, v, true))}</td>`).join("") +
             `<td class="ytd">${esc(fmtVal(m, yv, true))}</td></tr>`;
+          if (m.prev) {
+            const pv = ytd({ agg: m.agg, cur: m.prev });
+            body += `<tr class="prev"><td class="nm">${(data.kpi?.year || new Date().getFullYear()) - 1}</td><td></td>` +
+              m.prev.map((v) => `<td>${v === null ? '<span class="mut">—</span>' : esc(fmtVal(m, v, true))}</td>`).join("") +
+              `<td class="ytd">${esc(fmtVal(m, pv, true))}</td></tr>`;
+          }
         });
       });
       body += "</tbody></table>";
@@ -2162,6 +2172,9 @@ function ReportWorkspace({ data, mutate }) {
   .bsc td.ytd { background:#EAF1F8; font-weight:800; }
   .bsc td.tg { color:#5C6675; }
   .bsc .mut { color:#B9C1CC; }
+  .bsc tr.prev td { color:#8A93A1; background:#FAFBFC; font-weight:500; font-size:6pt; }
+  .bsc tr.prev td.nm { border-left:2.5pt solid #E4E9ED; }
+  .bsc tr.prev td.ytd { background:#F1F5FA; }
 </style></head><body>
 <div class="head"><img src="${window.location.origin}/cmac-logo.png" alt="cmac." /><span style="font-size:8.5pt;letter-spacing:2px;color:#5C6675;font-weight:800;">OPERATIONS COMMAND CENTRE</span></div>
 <h1>${esc(outTitle)}<span style="color:#FD0E33">.</span></h1>
