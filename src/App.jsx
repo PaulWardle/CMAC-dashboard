@@ -311,7 +311,8 @@ const STYLES = `
 .checkline { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-bottom:1px solid #EEF1F4; }
 pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:14px 16px; line-height:1.55; }
 .chat { display:flex; flex-direction:column; gap:8px; }
-.aview { display:flex; flex-direction:column; height:calc(100dvh - 122px); min-height:380px; max-width:820px; margin:0 auto; width:100%; }
+.aview { display:flex; flex-direction:column; height:calc(100dvh - 122px); min-height:380px; }
+.acol { flex:1; display:flex; flex-direction:column; min-height:0; max-width:820px; margin:0 auto; width:100%; }
 .bub { max-width:82%; padding:9px 13px; border-radius:14px; font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:break-word; }
 .bub.user { align-self:flex-end; background:#112138; color:#fff; border-bottom-right-radius:4px; }
 .bub.ai { align-self:flex-start; background:#fff; border:1px solid #E1E7EC; border-bottom-left-radius:4px; }
@@ -2492,6 +2493,7 @@ ${serialiseForAI(data)}`;
           Apply changes without asking
         </label>}
       </div>
+      <div className="acol">
       <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8, ...(dragOver ? { outline: "2px dashed #FD0E33", outlineOffset: -4, borderRadius: 12 } : {}) }}>
         {!msgs.length && !live && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16, padding: "16px 10px" }}>
@@ -2543,6 +2545,7 @@ ${serialiseForAI(data)}`;
           <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || ingesting || (!input.trim() && !files.length)} onClick={() => send()}>Send</button>
         </div>
         {onClose && <button className="aclose" onClick={onClose} aria-label="Close assistant" title="Close assistant">✕</button>}
+      </div>
       </div>
     </div>
   );
