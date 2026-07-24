@@ -321,9 +321,8 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .clip-fab svg { height:68px; width:auto; display:block; }
 .clip-fab:hover { transform:scale(1.08) rotate(-8deg); }
 .clip-fab:active { transform:scale(.95); }
-.clip-fab.open { background:#112138; border-radius:50%; bottom:140px; width:40px; height:40px; filter:none; box-shadow:0 5px 14px rgba(17,33,56,.3); }
-.clip-fab.open:hover { transform:scale(1.08) rotate(0deg); }
-.clip-fab .fx { color:#fff; font-size:15px; font-weight:700; line-height:1; }
+.aclose { width:40px; height:40px; flex:none; border-radius:50%; background:#112138; color:#fff; border:none; cursor:pointer; font-size:15px; font-weight:700; line-height:1; box-shadow:0 4px 12px rgba(17,33,56,.25); }
+.aclose:hover { background:#1c3252; }
 @media (max-width: 900px) {
   .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
   .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
@@ -351,7 +350,6 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
   .h1 { font-size:16px; }
   .clip-fab { right:14px; bottom:calc(70px + env(safe-area-inset-bottom)); }
   .clip-fab svg { height:62px; }
-  .clip-fab.open { bottom:calc(164px + env(safe-area-inset-bottom)); width:40px; height:40px; }
   .aview { height:calc(100dvh - 205px); }
 }
 @media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
@@ -2241,7 +2239,7 @@ function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
    Assistant — live conversational Claude over the workspace,
    with tools to create/update work items (approval-gated or auto).
    ============================================================ */
-function Assistant({ data, mutate, auth }) {
+function Assistant({ data, mutate, auth, onClose }) {
   const canEdit = !auth || auth.canEdit;
   const [msgs, setMsgs] = useState([]);
   const [live, setLive] = useState("");
@@ -2533,15 +2531,18 @@ ${serialiseForAI(data)}`;
             </span>))}
           {ingesting && <span className="chip">Reading file…</span>}
         </div>)}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, padding: "6px 6px 6px 8px", background: "#fff", border: "1px solid #E1E7EC", borderRadius: 999, boxShadow: "0 4px 18px rgba(17,33,56,.07)" }}>
-        <input ref={fileRef} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
-          onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-        <button style={{ border: "none", background: "none", fontSize: 17, cursor: "pointer", padding: "4px 6px", flex: "none" }}
-          title="Attach files (emails, Word, Excel, PDFs, screenshots)" aria-label="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
-        <input className="input" style={{ flex: 1, border: "none", background: "transparent", outline: "none", boxShadow: "none" }} placeholder="Ask, tell it what to do, or drop a file…" value={input}
-          onChange={(e) => setInput(e.target.value)} onPaste={onPaste}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-        <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || ingesting || (!input.trim() && !files.length)} onClick={() => send()}>Send</button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <div style={{ flex: 1, display: "flex", gap: 6, alignItems: "center", padding: "6px 6px 6px 8px", background: "#fff", border: "1px solid #E1E7EC", borderRadius: 999, boxShadow: "0 4px 18px rgba(17,33,56,.07)" }}>
+          <input ref={fileRef} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
+            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+          <button style={{ border: "none", background: "none", fontSize: 17, cursor: "pointer", padding: "4px 6px", flex: "none" }}
+            title="Attach files (emails, Word, Excel, PDFs, screenshots)" aria-label="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
+          <input className="input" style={{ flex: 1, border: "none", background: "transparent", outline: "none", boxShadow: "none" }} placeholder="Ask, tell it what to do, or drop a file…" value={input}
+            onChange={(e) => setInput(e.target.value)} onPaste={onPaste}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+          <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || ingesting || (!input.trim() && !files.length)} onClick={() => send()}>Send</button>
+        </div>
+        {onClose && <button className="aclose" onClick={onClose} aria-label="Close assistant" title="Close assistant">✕</button>}
       </div>
     </div>
   );
@@ -2587,12 +2588,12 @@ function ClipMark({ size = 68 }) {
 }
 
 /* Floating assistant button — Clippy standing in the corner of every screen.
-   Toggles the Assistant; shows a close button while the Assistant is open. */
+   Hidden while the Assistant is open; its composer row carries the close button. */
 function ClipFab({ open, onClick }) {
+  if (open) return null;
   return (
-    <button className={"clip-fab" + (open ? " open" : "")} onClick={onClick}
-      aria-label={open ? "Close assistant" : "Open assistant"} title={open ? "Close assistant" : "Assistant"}>
-      {open ? <span className="fx">✕</span> : <ClipMark size={68} />}
+    <button className="clip-fab" onClick={onClick} aria-label="Open assistant" title="Assistant">
+      <ClipMark size={68} />
     </button>
   );
 }
@@ -2757,7 +2758,7 @@ export default function App({ auth }) {
   const view = (() => {
     switch (nav) {
       case "command": return <CommandCentre data={data} mutate={mutate} openItem={openItem} go={go} openProject={openProject} openMob={openMob} />;
-      case "assistant": return <Assistant data={data} mutate={mutate} auth={auth} />;
+      case "assistant": return <Assistant data={data} mutate={mutate} auth={auth} onClose={toggleAssistant} />;
       case "capture": return <Capture data={data} mutate={mutate} openItem={openItem} />;
       case "priorities": return <Priorities data={data} mutate={mutate} openItem={openItem} />;
       case "actions": return <ActionBoard data={data} mutate={mutate} openItem={openItem} newItem={newItem} />;
