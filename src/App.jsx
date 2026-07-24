@@ -188,7 +188,7 @@ function seedData() {
     stakeholderNotes: {}, dismissedAlerts: [],
     context: { org: "", people: "", clients: "", rules: "", learned: "" },
     boardDraft: { period: monthName(), deadline: "", meetingDate: "", commentary: {}, excluded: [], overrides: {}, complete: [] },
-    cooDraft: { period: "Week of " + fmtD(todayISO()), commentary: {}, excluded: [], overrides: {} },
+    cooDraft: { period: "Week of " + fmtD(todayISO()), deadline: "", commentary: {}, excluded: [], overrides: {} },
     newsDraft: { edition: monthName(), approved: [], rejected: [], headlines: {}, articles: [] },
     weekly: { weekOf: todayISO(), steps: {}, topFive: ["", "", "", "", ""], support: "" },
     activity: [{ ts: Date.now(), text: "Fresh start — system initialised" }],
@@ -750,7 +750,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
         waiting.forEach((w) => { const nc = daysUntil(w.nextChase); if (w.nextChase && nc >= 0 && nc <= 30) ev.push({ d: w.nextChase, kind: "Chase", tone: "#B45309", label: (w.waitingOn ? w.waitingOn + " — " : "") + w.title, go: () => openItem(w) }); });
         activeProjects.forEach((p) => { const dm = daysUntil(p.nextMilestoneDate); if (p.nextMilestone && dm !== null && dm >= 0 && dm <= 30) ev.push({ d: p.nextMilestoneDate, kind: "Milestone", tone: "#112138", label: p.nextMilestone + " — " + p.name, go: () => openProject(p.id) }); });
         activeMobs.forEach((m) => { const dg = daysUntil(m.goLive); if (dg !== null && dg >= 0 && dg <= 30) ev.push({ d: m.goLive, kind: "Go-live", tone: "#FD0E33", label: m.name, go: () => openMob(m.id) }); });
-        { const bd = daysUntil(data.boardDraft?.deadline); if (data.boardDraft?.deadline && bd >= 0 && bd <= 30) ev.push({ d: data.boardDraft.deadline, kind: "Board pack", tone: "#1D5FBF", label: "Board pack submission deadline", go: () => go("board") }); }
+        { const bd = daysUntil(data.cooDraft?.deadline); if (data.cooDraft?.deadline && bd >= 0 && bd <= 30) ev.push({ d: data.cooDraft.deadline, kind: "Board pack", tone: "#1D5FBF", label: "Board pack submission deadline", go: () => go("coo") }); }
         ev.sort((a, b) => a.d.localeCompare(b.d));
         if (!ev.length) return null;
         return (
@@ -1701,8 +1701,6 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
 /* ============================================================
    Reporting engines: Board Pack, COO Update, Newsletter
    ============================================================ */
-const BP_SECTIONS = [["exec", "Executive summary"], ["wins", "Key wins and successes"], ["projects", "Major projects"], ["mobs", "Mobilisations"], ["concerns", "Client and service concerns"], ["risks", "Risks"], ["decisions", "Decisions required from the board"], ["next", "Priorities for next period"]];
-
 function boardSources(data, section) {
   const done30 = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 31);
   switch (section) {
@@ -1724,7 +1722,7 @@ function boardSources(data, section) {
    memory-jogger prompts shown as chips; suggested content is routed to the
    right section from tracked work. */
 const COO_SECTIONS = [
-  ["exec", "Summary for COO", ["The week in three lines", "Anything he must hear from you first"]],
+  ["exec", "Summary", ["The week in three lines", "Anything they must hear from you first"]],
   ["people", "People", ["Staff updates", "High-risk updates", "New role / position requests", "Training & development", "People exception reporting", "Succession planning", "Group POA", "T&Q updates"]],
   ["resourcing", "Resourcing", ["Staffing levels", "Overtime costs", "Recruitment planning", "Turnover"]],
   ["profit", "Profit", ["Operational performance — KPIs / OKRs / service levels", "Targets vs actuals", "Variance & impact", "Goals, targets, actions", "Departmental budget"]],
@@ -1744,15 +1742,21 @@ const COO_KEYWORDS = {
   opsportal: ["ops portal", "portal", "offline", "digitalisation"],
 };
 
-function ReportWorkspace({ data, mutate, kind }) {
-  const isBoard = kind === "board";
-  const draftKey = isBoard ? "boardDraft" : "cooDraft";
-  const draft = data[draftKey];
-  const sections = isBoard ? BP_SECTIONS : COO_SECTIONS;
+/* One prep workspace, two outputs: the COO update and the board pack share
+   every section except People, which never reaches the board output. */
+const BOARD_LABELS = { exec: "Executive summary", decisions: "Decisions required from the board", aob: "Risks & AOB", priorities: "Priorities for next period", challenges: "Challenges & service concerns", projects: "Major projects", wins: "Key wins and successes" };
+
+function ReportWorkspace({ data, mutate }) {
+  const draft = data.cooDraft;
+  const sections = COO_SECTIONS;
   const [tidying, setTidying] = useState("");
-  const upd = (fn) => mutate((d) => { fn(d[draftKey]); return d; }, null);
+  const [aud, setAud] = useState("coo");
+  const forBoard = aud === "board";
+  const outSections = () => sections.filter(([k]) => !(forBoard && k === "people"));
+  const labelFor = (k, label) => (forBoard && BOARD_LABELS[k]) || label;
+  const outTitle = forBoard ? "Board operations update" : "COO update";
+  const upd = (fn) => mutate((d) => { fn(d.cooDraft); return d; }, null);
   const srcFor = (k) => {
-    if (isBoard) return boardSources(data, k);
     const open = data.workItems.filter((w) => OPEN_STATUSES.includes(w.status));
     if (k === "priorities") return open.filter((w) => w.horizon === "Now" && w.status !== "Blocked")
       .sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 8)
@@ -1787,7 +1791,7 @@ function ReportWorkspace({ data, mutate, kind }) {
     setTidying(k);
     try {
       const out = await askClaude(
-        `Rewrite these rough 1:1 prep scribbles as crisp briefing lines for a COO update. Keep every fact, name and number; do not invent or embellish anything; UK spelling; concise and direct. Return ONLY the briefing lines, one per line starting with "- ".\n\nSECTION: ${label}\nSCRIBBLES:\n${notes}`,
+        `Rewrite these rough prep scribbles as crisp briefing lines for an executive update. Keep every fact, name and number; do not invent or embellish anything; UK spelling; concise and direct. Return ONLY the briefing lines, one per line starting with "- ".\n\nSECTION: ${label}\nSCRIBBLES:\n${notes}`,
         false, 900);
       if (out && typeof out === "string") upd((x) => { x.commentary[k] = out.trim(); });
     } catch (e) { alert("Could not tidy just now (" + (e.message || "AI error") + ")."); }
@@ -1797,28 +1801,28 @@ function ReportWorkspace({ data, mutate, kind }) {
   data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage) && !p.position).forEach((p) => gaps.push(`No current position recorded for ${p.name}`));
   data.projects.filter((p) => daysSince(p.updatedAt) > data.settings.staleProject).forEach((p) => gaps.push(`${p.name} not updated for ${daysSince(p.updatedAt)} days`));
   const generate = () => {
-    const lines = [`# ${isBoard ? "Board operations update" : "COO update"} — ${draft.period}`, ""];
-    sections.forEach(([k, label]) => {
-      lines.push(`## ${label}`);
+    const lines = [`# ${outTitle} — ${draft.period}`, ""];
+    outSections().forEach(([k, label]) => {
+      lines.push(`## ${labelFor(k, label)}`);
       if (draft.commentary[k]) lines.push(draft.commentary[k], "");
       srcFor(k).filter((s) => !draft.excluded.includes(k + ":" + s.id)).forEach((s) => lines.push(`- ${draft.overrides[k + ":" + s.id] || s.text}`));
       lines.push("");
     });
     lines.push(`_Prepared ${fmtD(todayISO())}. Generated from CMAC Operations Command Centre._`);
     const md = lines.join("\n");
-    copyText(md); alert("Draft copied to clipboard as Markdown — paste into Word / email." + (isBoard ? " Once the pack is out, take a JSON backup from Settings." : ""));
+    copyText(md); alert(`${outTitle} copied to clipboard as Markdown — paste into Word / email.` + (forBoard ? " People was excluded automatically. Once the pack is out, take a JSON backup from Settings." : ""));
   };
   const printDraft = () => {
     const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     let body = "";
-    sections.forEach(([k, label]) => {
+    outSections().forEach(([k, label]) => {
       const items = srcFor(k).filter((s) => !draft.excluded.includes(k + ":" + s.id));
       if (!draft.commentary[k] && !items.length) return;
-      body += `<h2>${esc(label)}<span class="dot">.</span></h2>`;
+      body += `<h2>${esc(labelFor(k, label))}<span class="dot">.</span></h2>`;
       if (draft.commentary[k]) body += `<p class="comm">${esc(draft.commentary[k])}</p>`;
       if (items.length) body += "<ul>" + items.map((s) => `<li>${esc(draft.overrides[k + ":" + s.id] || s.text)}</li>`).join("") + "</ul>";
     });
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(isBoard ? "Board operations update" : "COO update")} — ${esc(draft.period)}</title>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(outTitle)} — ${esc(draft.period)}</title>
 <style>
   @page { margin: 18mm 16mm; }
   body { font-family: 'Montserrat','Segoe UI',system-ui,sans-serif; color:#112138; font-size:11.5pt; line-height:1.55; margin:0; }
@@ -1833,7 +1837,7 @@ function ReportWorkspace({ data, mutate, kind }) {
   .foot { margin-top:26px; color:#8A93A1; font-size:8.5pt; border-top:1px solid #E1E7EC; padding-top:8px; }
 </style></head><body>
 <div class="head"><img src="${window.location.origin}/cmac-logo.png" alt="cmac." /><span style="font-size:8.5pt;letter-spacing:2px;color:#5C6675;font-weight:800;">OPERATIONS COMMAND CENTRE</span></div>
-<h1>${esc(isBoard ? "Board operations update" : "COO update")}<span style="color:#FD0E33">.</span></h1>
+<h1>${esc(outTitle)}<span style="color:#FD0E33">.</span></h1>
 <div class="meta">${esc(draft.period)} · Prepared ${fmtD(todayISO())} · Paul Wardle</div>
 ${body}
 <div class="foot">Generated from the CMAC Operations Command Centre.</div>
@@ -1844,34 +1848,37 @@ ${body}
   };
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-        <h2 className="h1">{isBoard ? "Board Pack workspace" : "COO Update"}</h2>
-        <input className="input" style={{ width: 180 }} value={draft.period} onChange={(e) => upd((x) => { x.period = e.target.value; })} />
-        {isBoard && <><label className="flab" style={{ margin: 0 }}>Submission deadline</label><input type="date" className="input" style={{ width: 140 }} value={draft.deadline || ""} onChange={(e) => upd((x) => { x.deadline = e.target.value; })} /></>}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h2 className="h1">COO & Board Update</h2>
+        <input className="input" style={{ width: 170 }} value={draft.period} onChange={(e) => upd((x) => { x.period = e.target.value; })} />
+        <label className="flab" style={{ margin: 0 }}>Board deadline</label>
+        <input type="date" className="input" style={{ width: 140 }} value={draft.deadline || ""} onChange={(e) => upd((x) => { x.deadline = e.target.value; })} />
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+          <button className={"btn sm" + (aud === "coo" ? " pri" : "")} onClick={() => setAud("coo")}>For COO</button>
+          <button className={"btn sm" + (forBoard ? " pri" : "")} onClick={() => setAud("board")}>For Board</button>
           <button className="btn sm" onClick={printDraft}>Print / PDF</button>
-          <button className="btn pri sm" onClick={generate}>Generate & copy draft</button>
+          <button className="btn pri sm" onClick={generate}>Generate & copy {forBoard ? "board pack" : "COO draft"}</button>
         </span>
       </div>
-      <p className="sub">{isBoard
-        ? "Monthly cycle — first week of each month. Suggested content comes from flagged updates, completed work, projects, mobilisations, risks and decisions. Untick anything to exclude it; edit wording where needed; add your own commentary per section."
-        : "Structured around your 1:1 agenda. The grey chips under each heading are memory-joggers — scribble rough notes in the box (they save as you go), hit ✦ Tidy to turn them into crisp briefing lines, and untick or reword any auto-suggested content pulled from your tracked work."}</p>
-      {isBoard && draft.deadline && daysUntil(draft.deadline) <= 5 && <div className={daysUntil(draft.deadline) <= 2 ? "warnbox" : "notebox"}>Board pack deadline {fmtD(draft.deadline)} — {daysUntil(draft.deadline)} day(s) away.</div>}
+      <p className="sub">One set of prep, two outputs. Scribble under each heading (the grey chips are your memory-joggers, notes save as you go), hit ✦ Tidy to sharpen them, untick or reword the auto-suggested lines — then generate the COO update or the board pack from the same content. <b>People never goes into the board output</b>; everything else, including Resourcing, is shared.</p>
+      {draft.deadline && daysUntil(draft.deadline) >= 0 && daysUntil(draft.deadline) <= 5 && <div className={daysUntil(draft.deadline) <= 2 ? "warnbox" : "notebox"}>Board pack deadline {fmtD(draft.deadline)} — {daysUntil(draft.deadline)} day(s) away.</div>}
       {gaps.length > 0 && <div className="warnbox"><b>Gaps to close before drafting:</b><br />{gaps.slice(0, 5).map((g, i) => <span key={i}>• {g}<br /></span>)}</div>}
       {sections.map(([k, label, prompts]) => {
         const srcs = srcFor(k);
+        const heldBack = forBoard && k === "people";
         return (
-          <div key={k} className="card" style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div key={k} className="card" style={{ marginBottom: 10, opacity: heldBack ? 0.55 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <div className="h2" style={{ marginTop: 0, flex: 1 }}>{label}</div>
-              {!isBoard && (draft.commentary[k] || "").trim() && (
+              {heldBack && <span className="chip" style={{ background: "#FD0E33", color: "#fff" }}>Not included in the board pack</span>}
+              {(draft.commentary[k] || "").trim() && (
                 <button className="btn sm" disabled={tidying === k} onClick={() => tidy(k, label)}>{tidying === k ? "Tidying…" : "✦ Tidy scribbles"}</button>)}
             </div>
-            {!isBoard && prompts && (
+            {prompts && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "2px 0 8px" }}>
                 {prompts.map((p) => <span key={p} className="chip" style={{ fontSize: 10.5 }}>{p}</span>)}
               </div>)}
-            <textarea className="ta" rows={isBoard ? 2 : 3} placeholder={isBoard ? "Your commentary for this section (appears first)…" : "Scribbles — rough bullets are fine; ✦ Tidy sharpens them into briefing lines…"} value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
+            <textarea className="ta" rows={3} placeholder="Scribbles — rough bullets are fine; ✦ Tidy sharpens them into briefing lines…" value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
             {srcs.length === 0 && <div className="sub" style={{ marginTop: 6 }}>No suggested content — nothing flagged for this section yet.</div>}
             {srcs.map((s) => {
               const key = k + ":" + s.id;
@@ -2675,7 +2682,7 @@ function ClipFab({ open, onClick }) {
 const NAV = [
   ["Daily working", [["command", "Command Centre"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
   ["Delivery", [["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
-  ["Reporting", [["board", "Board Pack"], ["coo", "COO Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
+  ["Reporting", [["coo", "COO & Board Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
 ];
 
@@ -2842,8 +2849,7 @@ export default function App({ auth }) {
       case "risks": return <RisksView data={data} openItem={openItem} newItem={newItem} />;
       case "decisions": return <Decisions data={data} openItem={openItem} newItem={newItem} />;
       case "country": return <CountryView data={data} openItem={openItem} setNav={setNav} setProjDetail={setProjDetail} />;
-      case "board": return <ReportWorkspace data={data} mutate={mutate} kind="board" />;
-      case "coo": return <ReportWorkspace data={data} mutate={mutate} kind="coo" />;
+      case "board": case "coo": return <ReportWorkspace data={data} mutate={mutate} />;
       case "newsletter": return <Newsletter data={data} mutate={mutate} />;
       case "weekly": return <WeeklyReview data={data} mutate={mutate} go={go} />;
       case "archive": return <Archive data={data} openItem={openItem} />;
