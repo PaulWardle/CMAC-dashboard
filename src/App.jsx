@@ -1750,6 +1750,7 @@ function ReportWorkspace({ data, mutate }) {
   const draft = data.cooDraft;
   const sections = COO_SECTIONS;
   const [tidying, setTidying] = useState("");
+  const [sweeping, setSweeping] = useState(false);
   const [aud, setAud] = useState("coo");
   const forBoard = aud === "board";
   const outSections = () => sections.filter(([k]) => !(forBoard && k === "people"));
@@ -1800,7 +1801,7 @@ function ReportWorkspace({ data, mutate }) {
   const gaps = [];
   data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage) && !p.position).forEach((p) => gaps.push(`No current position recorded for ${p.name}`));
   data.projects.filter((p) => daysSince(p.updatedAt) > data.settings.staleProject).forEach((p) => gaps.push(`${p.name} not updated for ${daysSince(p.updatedAt)} days`));
-  const generate = () => {
+  const buildMd = () => {
     const lines = [`# ${outTitle} — ${draft.period}`, ""];
     outSections().forEach(([k, label]) => {
       lines.push(`## ${labelFor(k, label)}`);
@@ -1809,10 +1810,32 @@ function ReportWorkspace({ data, mutate }) {
       lines.push("");
     });
     lines.push(`_Prepared ${fmtD(todayISO())}. Generated from CMAC Operations Command Centre._`);
-    const md = lines.join("\n");
-    copyText(md); alert(`${outTitle} copied to clipboard as Markdown — paste into Word / email.` + (forBoard ? " People was excluded automatically. Once the pack is out, take a JSON backup from Settings." : ""));
+    return lines.join("\n");
   };
-  const printDraft = () => {
+  /* Belt-and-braces for the board output: even though People is excluded
+     wholesale, sweep the remaining content for anything person-specific that
+     strayed into another section, and show it before it goes anywhere. */
+  const boardSweep = async (md) => {
+    setSweeping(true);
+    try {
+      const out = await askClaude(
+        `You are checking a BOARD pack draft for content that should not reach a company board because it concerns specific, identifiable individuals: staff performance or conduct concerns, disciplinary matters, PIPs, health, salary, personal circumstances, or anything a named employee would not expect a board to read about them. A name appearing merely as the owner of an action or project is acceptable. Respond ONLY with JSON: {"flags": [{"quote": "the exact offending line or phrase", "reason": "short reason"}]} — an empty array if nothing is concerning.\n\nBOARD PACK DRAFT:\n${md.slice(0, 24000)}`,
+        true, 1200);
+      const flags = (out && out.flags) || [];
+      if (!flags.length) return true;
+      const list = flags.slice(0, 6).map((f) => `• "${String(f.quote || "").slice(0, 140)}" — ${f.reason || ""}`).join("\n");
+      return await askConfirm(`The AI sweep found ${flags.length} line(s) that look person-specific:\n\n${list}\n\nInclude them in the board pack anyway? (Cancel to go back and edit — person-specific detail belongs in the People section, which never reaches the board.)`);
+    } catch (e) {
+      return await askConfirm("The AI person-check could not run (" + (e.message || "AI error") + "). Continue without it?");
+    } finally { setSweeping(false); }
+  };
+  const generate = async () => {
+    const md = buildMd();
+    if (forBoard && !(await boardSweep(md))) return;
+    copyText(md); alert(`${outTitle} copied to clipboard as Markdown — paste into Word / email.` + (forBoard ? " People was excluded automatically and the rest passed the person-check. Once the pack is out, take a JSON backup from Settings." : ""));
+  };
+  const printDraft = async () => {
+    if (forBoard && !(await boardSweep(buildMd()))) return;
     const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     let body = "";
     outSections().forEach(([k, label]) => {
@@ -1856,8 +1879,8 @@ ${body}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <button className={"btn sm" + (aud === "coo" ? " pri" : "")} onClick={() => setAud("coo")}>For COO</button>
           <button className={"btn sm" + (forBoard ? " pri" : "")} onClick={() => setAud("board")}>For Board</button>
-          <button className="btn sm" onClick={printDraft}>Print / PDF</button>
-          <button className="btn pri sm" onClick={generate}>Generate & copy {forBoard ? "board pack" : "COO draft"}</button>
+          <button className="btn sm" disabled={sweeping} onClick={printDraft}>Print / PDF</button>
+          <button className="btn pri sm" disabled={sweeping} onClick={generate}>{sweeping ? "Checking for names…" : `Generate & copy ${forBoard ? "board pack" : "COO draft"}`}</button>
         </span>
       </div>
       <p className="sub">One set of prep, two outputs. Scribble under each heading (the grey chips are your memory-joggers, notes save as you go), hit ✦ Tidy to sharpen them, untick or reword the auto-suggested lines — then generate the COO update or the board pack from the same content. <b>People never goes into the board output</b>; everything else, including Resourcing, is shared.</p>
