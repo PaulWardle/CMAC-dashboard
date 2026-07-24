@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { store } from "./lib/store";
 import { supabase } from "./lib/supabase";
 import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
+import { MONTHS, ytd, lastIdx, ragFor, fmtVal } from "./lib/bsc";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -187,6 +188,7 @@ function seedData() {
     v: 1, workItems: [], projects: [], mobs: [], updates: [], benefits: [], lessons: [], meetings: [],
     stakeholderNotes: {}, dismissedAlerts: [],
     context: { org: "", people: "", clients: "", rules: "", learned: "" },
+    kpi: { year: new Date().getFullYear(), updated: "", entities: [] },
     boardDraft: { period: monthName(), deadline: "", meetingDate: "", commentary: {}, excluded: [], overrides: {}, complete: [] },
     cooDraft: { period: "Week of " + fmtD(todayISO()), deadline: "", commentary: {}, excluded: [], overrides: {} },
     newsDraft: { edition: monthName(), approved: [], rejected: [], headlines: {}, articles: [] },
@@ -324,6 +326,21 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 .clip-fab:active { transform:scale(.95); }
 .aclose { width:40px; height:40px; flex:none; border-radius:50%; background:#112138; color:#fff; border:none; cursor:pointer; font-size:15px; font-weight:700; line-height:1; box-shadow:0 4px 12px rgba(17,33,56,.25); }
 .aclose:hover { background:#1c3252; }
+.kpi-tbl { width:100%; border-collapse:collapse; font-size:11px; background:#fff; min-width:1080px; }
+.kpi-tbl thead th { background:#112138; color:#fff; font-size:9px; letter-spacing:.8px; text-transform:uppercase; padding:8px 8px; text-align:right; white-space:nowrap; }
+.kpi-tbl thead th.nm { text-align:left; padding-left:12px; }
+.kpi-cat td { background:#112138; color:#fff; font-weight:800; font-size:10px; letter-spacing:1.2px; text-transform:uppercase; padding:6px 12px; }
+.kpi-cat .sq { color:#FD0E33; margin-right:4px; }
+.kpi-row td { padding:6px 8px; border-bottom:1px solid #EEF1F4; text-align:right; white-space:nowrap; font-weight:600; }
+.kpi-row td.nm { text-align:left; font-weight:700; border-left:4px solid #C6CDD8; padding-left:9px; }
+.kpi-row.G td.nm { border-left-color:#2E7D32; }
+.kpi-row.A td.nm { border-left-color:#F9A825; }
+.kpi-row.R td.nm { border-left-color:#FD0E33; }
+.kpi-row td.ytd, .kpi-tbl thead th.ytd { background:#EAF1F8; font-weight:800; }
+.kpi-row td.tgt { color:#5C6675; }
+.kpi-row { cursor:pointer; }
+.kpi-row:hover td { background:#F4F7FA; }
+.kpi-row.on td { background:#EDF3FF; }
 @media (max-width: 900px) {
   .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:55; background:#112138; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(17,33,56,.25); }
   .tabbar button { background:none; border:none; color:#9FB0C8; font-family:inherit; font-size:9.5px; font-weight:800; letter-spacing:.4px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; cursor:pointer; }
@@ -1701,6 +1718,198 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
 /* ============================================================
    Reporting engines: Board Pack, COO Update, Newsletter
    ============================================================ */
+/* ============================================================
+   SLA & KPIs — the balanced scorecard, live in the app.
+   Imported from the monthly BSC workbook (deterministic parser, no AI
+   touching the numbers); every figure then feeds the Assistant, capture
+   triage and reporting.
+   ============================================================ */
+function KpiDonut({ counts }) {
+  const total = counts.G + counts.A + counts.R;
+  if (!total) return null;
+  const R = 26, C = 2 * Math.PI * R;
+  let off = 0;
+  const segs = [["#2E7D32", counts.G], ["#F9A825", counts.A], ["#FD0E33", counts.R]].filter(([, n]) => n > 0);
+  return (
+    <svg width="76" height="76" viewBox="0 0 72 72" aria-hidden="true">
+      <circle cx="36" cy="36" r={R} fill="none" stroke="#E4E9ED" strokeWidth="10" />
+      {segs.map(([color, n], i) => {
+        const dash = (n / total) * C;
+        const el = <circle key={i} cx="36" cy="36" r={R} fill="none" stroke={color} strokeWidth="10"
+          strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={-off} transform="rotate(-90 36 36)" />;
+        off += dash;
+        return el;
+      })}
+      <text x="36" y="34" textAnchor="middle" fontSize="14" fontWeight="800" fill="#112138">{counts.G}/{total}</text>
+      <text x="36" y="46" textAnchor="middle" fontSize="7" fontWeight="700" fill="#5C6675">ON TARGET</text>
+    </svg>
+  );
+}
+
+function KpiChart({ metric }) {
+  const cur = metric.cur || [], prev = metric.prev || [];
+  const all = [...cur, ...prev, metric.target].filter((v) => v !== null && v !== undefined);
+  if (!all.length) return null;
+  const max = (Math.max(...all) || 1) * 1.15;
+  const W = 580, H = 170, padL = 6, padB = 18, bw = (W - padL) / 12;
+  const y = (v) => H - padB - (Math.max(v, 0) / max) * (H - padB - 12);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", maxHeight: 220 }}>
+      {MONTHS.map((mo, i) => (
+        <g key={mo}>
+          {prev[i] !== null && prev[i] !== undefined &&
+            <rect x={padL + i * bw + 5} y={y(prev[i])} width={(bw - 16) / 2} height={H - padB - y(prev[i])} fill="#C6CDD8" rx="2">
+              <title>{mo} {`prior yr: ${fmtVal(metric, prev[i])}`}</title></rect>}
+          {cur[i] !== null && cur[i] !== undefined &&
+            <rect x={padL + i * bw + 5 + (bw - 16) / 2 + 2} y={y(cur[i])} width={(bw - 16) / 2} height={H - padB - y(cur[i])} fill="#112138" rx="2">
+              <title>{mo}: {fmtVal(metric, cur[i])}</title></rect>}
+          <text x={padL + i * bw + bw / 2} y={H - 5} textAnchor="middle" fontSize="9" fontWeight="600" fill="#8A93A1">{mo}</text>
+        </g>
+      ))}
+      {metric.target !== null && metric.target !== undefined &&
+        <line x1={padL} x2={W} y1={y(metric.target)} y2={y(metric.target)} stroke="#FD0E33" strokeWidth="1.5" strokeDasharray="6 4" />}
+    </svg>
+  );
+}
+
+function KpiPage({ data, mutate, auth }) {
+  const canEdit = !auth || auth.canEdit;
+  const kpi = data.kpi || { year: new Date().getFullYear(), entities: [] };
+  const [entId, setEntId] = useState("");
+  const [sel, setSel] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef(null);
+  const ent = kpi.entities.find((e) => e.id === entId) || kpi.entities[0];
+  const allMetrics = ent ? ent.categories.flatMap((c) => c.metrics) : [];
+  const counts = { G: 0, A: 0, R: 0 };
+  allMetrics.forEach((m) => { const r = ragFor(m, ytd(m)); if (r) counts[r]++; });
+  const reds = allMetrics.filter((m) => ragFor(m, ytd(m)) === "R");
+  const selMetric = allMetrics.find((m) => m.id === sel);
+
+  const importFile = async (f) => {
+    if (!f) return;
+    setImporting(true);
+    try {
+      const { parseScorecardWorkbook } = await import("./lib/bscParse");
+      const out = parseScorecardWorkbook(await f.arrayBuffer());
+      const nMetrics = out.entities.reduce((s, e) => s + e.categories.reduce((x, c) => x + c.metrics.length, 0), 0);
+      const ok = await askConfirm(
+        `Import "${f.name}"?\n\n${out.entities.length} scorecard(s): ${out.entities.map((e) => e.name).join(", ")}.\n${nMetrics} measures with monthly actuals, prior year and targets.` +
+        (out.warnings.length ? "\n\n" + out.warnings.join("\n") : "") +
+        "\n\nThis replaces the current scorecard numbers (nothing else is touched).");
+      if (ok) {
+        mutate((d) => { d.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities }; return d; }, "Balanced Scorecard imported: " + f.name);
+        setSel(null); setEntId("");
+      }
+    } catch (e) { alert("Could not import that workbook: " + (e.message || e)); }
+    setImporting(false);
+  };
+
+  const updMetric = (id, fn) => mutate((d) => {
+    (d.kpi?.entities || []).forEach((e) => e.categories.forEach((c) => c.metrics.forEach((m) => { if (m.id === id) fn(m); })));
+    return d;
+  }, null);
+  const toRaw = (m, str) => { const n = Number(str); if (str === "" || !isFinite(n)) return null; return m.unit === "pct" ? n / 100 : n; };
+  const toDisp = (m, v) => v === null || v === undefined ? "" : m.unit === "pct" ? +(v * 100).toFixed(2) : m.unit === "gbp2" ? +v.toFixed(2) : Math.round(v * 100) / 100;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h2 className="h1">SLA & KPIs</h2>
+        {kpi.updated && <span className="sub" style={{ margin: 0 }}>Scorecard updated {fmtD(kpi.updated)}</span>}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <input ref={fileRef} type="file" accept=".xlsx,.xlsm" style={{ display: "none" }} onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = ""; }} />
+          {canEdit && <button className="btn pri sm" disabled={importing} onClick={() => fileRef.current?.click()}>{importing ? "Importing…" : "⇪ Import scorecard (.xlsx)"}</button>}
+        </span>
+      </div>
+      {!ent ? (
+        <div className="card" style={{ textAlign: "center", padding: "40px 20px" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>No scorecard loaded yet</div>
+          <div className="sub" style={{ maxWidth: 520, margin: "0 auto" }}>
+            Import your monthly Balanced Scorecard workbook and every measure — targets, monthly actuals and prior year — lands here:
+            RAG against target, YTD, trends, and the whole scorecard becomes part of what the Assistant and Capture know.
+          </div>
+          {canEdit && <button className="btn pri" style={{ marginTop: 14 }} onClick={() => fileRef.current?.click()}>Import Balanced Scorecard</button>}
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "4px 0 10px" }}>
+            {kpi.entities.map((e) => (
+              <button key={e.id} className={"btn sm" + ((ent && ent.id === e.id) ? " pri" : "")} onClick={() => { setEntId(e.id); setSel(null); }}>{e.name}</button>))}
+          </div>
+          <div className="card" style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+            <KpiDonut counts={counts} />
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontWeight: 800 }}>{ent.name} — {counts.G} on target · {counts.A} close · {counts.R} off target <span style={{ color: "#8A93A1", fontWeight: 600 }}>(YTD vs target)</span></div>
+              {reds.length > 0 && <div className="sub" style={{ margin: "4px 0 0" }}>Off target: {reds.slice(0, 6).map((m) => m.name).join(" · ")}{reds.length > 6 ? ` +${reds.length - 6} more` : ""}</div>}
+              <div className="sub" style={{ margin: "4px 0 0" }}>Click any measure for its trend vs last year{canEdit ? " and to edit values or targets" : ""}.</div>
+            </div>
+          </div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 12, boxShadow: "0 1px 4px rgba(17,33,56,.08)" }}>
+            <table className="kpi-tbl">
+              <thead><tr><th className="nm">Measure</th><th>Target</th>{MONTHS.map((m) => <th key={m}>{m}</th>)}<th className="ytd">YTD</th></tr></thead>
+              <tbody>
+                {ent.categories.map((c) => (
+                  <React.Fragment key={c.name}>
+                    <tr className="kpi-cat"><td colSpan={15}><span className="sq">■</span> {c.name}</td></tr>
+                    {c.metrics.map((m) => {
+                      const yv = ytd(m); const rag = ragFor(m, yv);
+                      return (
+                        <tr key={m.id} className={"kpi-row " + rag + (sel === m.id ? " on" : "")} onClick={() => setSel(sel === m.id ? null : m.id)}>
+                          <td className="nm">{m.name}</td>
+                          <td className="tgt">{m.target !== null && m.target !== undefined ? fmtVal(m, m.target, true) : "—"}</td>
+                          {MONTHS.map((mo, i) => <td key={mo} style={m.cur[i] === null ? { color: "#B9C1CC" } : null}>{fmtVal(m, m.cur[i], true)}</td>)}
+                          <td className="ytd">{fmtVal(m, yv, true)}</td>
+                        </tr>);
+                    })}
+                  </React.Fragment>))}
+              </tbody>
+            </table>
+          </div>
+          {selMetric && (
+            <div className="card" style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div className="h2" style={{ margin: 0, flex: 1 }}>{selMetric.name}</div>
+                <span className="chip">2026 <span style={{ display: "inline-block", width: 10, height: 10, background: "#112138", borderRadius: 2, marginLeft: 4 }} /></span>
+                <span className="chip">Prior yr <span style={{ display: "inline-block", width: 10, height: 10, background: "#C6CDD8", borderRadius: 2, marginLeft: 4 }} /></span>
+                {selMetric.target !== null && <span className="chip">Target <span style={{ color: "#FD0E33" }}>- - -</span></span>}
+              </div>
+              <KpiChart metric={selMetric} />
+              {canEdit && (
+                <>
+                  <div className="frow" style={{ marginTop: 8 }}>
+                    <F label={"Target" + (selMetric.unit === "pct" ? " (%)" : "")}>
+                      <input type="number" className="input" value={toDisp(selMetric, selMetric.target)} placeholder="no target"
+                        onChange={(e) => updMetric(selMetric.id, (m) => { m.target = toRaw(m, e.target.value); })} />
+                    </F>
+                    <F label="Good direction">
+                      <select className="select" value={selMetric.dir} onChange={(e) => updMetric(selMetric.id, (m) => { m.dir = e.target.value; })}>
+                        <option value="high">Higher is better</option><option value="low">Lower is better</option>
+                      </select>
+                    </F>
+                    <F label="YTD calculation">
+                      <select className="select" value={selMetric.agg} onChange={(e) => updMetric(selMetric.id, (m) => { m.agg = e.target.value; })}>
+                        <option value="sum">Sum of months</option><option value="avg">Average of months</option>
+                      </select>
+                    </F>
+                  </div>
+                  <label className="flab" style={{ marginTop: 8 }}>Monthly actuals {selMetric.unit === "pct" ? "(%)" : ""}</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(76px, 1fr))", gap: 6 }}>
+                    {MONTHS.map((mo, i) => (
+                      <div key={mo}>
+                        <div style={{ fontSize: 9.5, fontWeight: 800, color: "#8A93A1", letterSpacing: ".5px" }}>{mo.toUpperCase()}</div>
+                        <input type="number" className="input" style={{ padding: "6px 6px" }} value={toDisp(selMetric, selMetric.cur[i])}
+                          onChange={(e) => updMetric(selMetric.id, (m) => { m.cur[i] = toRaw(m, e.target.value); })} />
+                      </div>))}
+                  </div>
+                </>)}
+            </div>)}
+        </>
+      )}
+    </div>
+  );
+}
+
 function boardSources(data, section) {
   const done30 = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 31);
   switch (section) {
@@ -2290,7 +2499,14 @@ function serialiseForAI(data) {
   const mobs = data.mobs.map((m) => ({ name: m.name, stage: m.stage, rag: m.rag, goLive: m.goLive, readiness: mobReadiness(m).pct + "%" }));
   const ctx = data.context || {};
   const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules, ctx.learned].filter(Boolean).join("\n"), 4000) || undefined;
-  return JSON.stringify({ today: todayISO(), context, items, projects, mobs }).slice(0, 16000);
+  // Balanced scorecard: the lead entity's targeted measures, so the AI can
+  // answer performance questions and spot regressions with real numbers.
+  const kg = (data.kpi?.entities || [])[0];
+  const scorecard = kg ? lim(kg.categories.flatMap((c) => c.metrics
+    .filter((m) => m.target !== null && m.target !== undefined)
+    .map((m) => { const li = lastIdx(m); const yv = ytd(m); return `${m.name}: last ${li >= 0 ? MONTHS[li] + " " + fmtVal(m, m.cur[li], true) : "n/a"}, YTD ${fmtVal(m, yv, true)} vs target ${fmtVal(m, m.target, true)} (${ragFor(m, yv) || "-"})`; }))
+    .join("; "), 2400) || undefined : undefined;
+  return JSON.stringify({ today: todayISO(), context, scorecard, items, projects, mobs }).slice(0, 18000);
 }
 function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   const [q, setQ] = useState("");
@@ -2704,7 +2920,7 @@ function ClipFab({ open, onClick }) {
 
 const NAV = [
   ["Daily working", [["command", "Command Centre"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
-  ["Delivery", [["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
+  ["Delivery", [["kpis", "SLA & KPIs"], ["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
   ["Reporting", [["coo", "COO & Board Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
 ];
@@ -2750,6 +2966,7 @@ export default function App({ auth }) {
       const displayName = auth && auth.mode === "cloud" ? emailToName(auth.email) : "Me";
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
+      if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
       }
@@ -2867,6 +3084,7 @@ export default function App({ auth }) {
       case "priorities": return <Priorities data={data} mutate={mutate} openItem={openItem} />;
       case "actions": return <ActionBoard data={data} mutate={mutate} openItem={openItem} newItem={newItem} />;
       case "waiting": return <Waiting data={data} mutate={mutate} openItem={openItem} />;
+      case "kpis": return <KpiPage data={data} mutate={mutate} auth={auth} />;
       case "projects": return <Projects data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={projDetail} setDetail={setProjDetail} />;
       case "mobs": return <Mobilisations data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={mobDetail} setDetail={setMobDetail} />;
       case "risks": return <RisksView data={data} openItem={openItem} newItem={newItem} />;
