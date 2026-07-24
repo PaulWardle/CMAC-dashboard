@@ -2249,8 +2249,52 @@ function Assistant({ data, mutate, auth }) {
   const [input, setInput] = useState("");
   const [autoApply, setAutoApply] = useState(true);
   const [pending, setPending] = useState(null); // { history, tools:[tool_use…] }
+  const [files, setFiles] = useState([]);
+  const [ingesting, setIngesting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef(null);
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [msgs, live, pending]);
+
+  const addFiles = async (fileList) => {
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length) return;
+    setIngesting(true);
+    for (const f of incoming) {
+      if (files.length + 1 > MAX_FILES) break;
+      try {
+        const processed = await fileToCapture(f);
+        setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
+      } catch (e) {
+        setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + String(e.message || e) }] }]);
+      }
+    }
+    setIngesting(false);
+  };
+  const onPaste = (e) => {
+    const imgs = Array.from(e.clipboardData?.items || []).filter((i) => i.type.startsWith("image/")).map((i) => i.getAsFile()).filter(Boolean);
+    if (imgs.length) { e.preventDefault(); addFiles(imgs); }
+  };
+
+  /* API view of the conversation: strip UI-only keys, and collapse binary
+     attachments from all but the newest attachment-bearing message into short
+     placeholders — Claude has already read them, so re-sending the bytes with
+     every following turn would only burn credits. */
+  const toApiHistory = (history) => {
+    let lastAtt = -1;
+    history.forEach((m, idx) => {
+      if (m.role === "user" && Array.isArray(m.content) && m.content.some((b) => b.type === "image" || b.type === "document")) lastAtt = idx;
+    });
+    return history.map((m, idx) => {
+      if (!Array.isArray(m.content)) return { role: m.role, content: m.content };
+      return { role: m.role, content: m.content.map((b) => {
+        if ((b.type === "image" || b.type === "document") && idx !== lastAtt)
+          return { type: "text", text: `[Attachment "${b._name || "file"}" was provided earlier in this conversation and has already been read]` };
+        const { _name, ...rest } = b;
+        return rest;
+      }) };
+    });
+  };
 
   const TOOLS = [
     {
@@ -2342,14 +2386,15 @@ function Assistant({ data, mutate, auth }) {
   const systemPrompt = () =>
     `You are the embedded assistant inside the CMAC Operations Command Centre, working for ${meName(data)} (${auth?.isAdmin ? "administrator" : canEdit ? "editor" : "view-only user"}). Today is ${fmtD(todayISO())} (${todayISO()}). Be concise, practical and direct; UK date format; plain prose (no markdown headers).
 ${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did. When you learn a durable fact — a person's role, a client, an abbreviation, a standing preference, or the user corrects you on something lasting — save one concise note with remember_context so future captures and conversations know it. Don't save one-off task details that way." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
-Ground every answer ONLY in the workspace data below plus the conversation. If something isn't tracked, say so plainly. Label inferences as observations.
+Messages may include attached files — emails, documents, spreadsheets (as CSV text), PDFs, screenshots. Read them fully and pull out what matters${canEdit ? "; when asked to log from them, create the items with the tools" : ""}.
+Ground every answer ONLY in the workspace data below, the conversation and any attached files. If something isn't tracked, say so plainly. Label inferences as observations.
 WORKSPACE:
 ${serialiseForAI(data)}`;
 
   const runRounds = async (history) => {
     let rounds = 0;
     while (rounds++ < 6) {
-      const r = await streamClaude({ system: systemPrompt(), messages: history, tools: canEdit ? TOOLS : undefined, onDelta: setLive });
+      const r = await streamClaude({ system: systemPrompt(), messages: toApiHistory(history), tools: canEdit ? TOOLS : undefined, onDelta: setLive });
       const asst = { role: "assistant", content: r.content };
       history = [...history, asst];
       setMsgs(history); setLive("");
@@ -2363,10 +2408,24 @@ ${serialiseForAI(data)}`;
   };
 
   const send = async (textIn) => {
-    const t = (textIn ?? input).trim();
-    if (!t || busy || pending) return;
-    const history = [...msgs, { role: "user", content: t }];
-    setMsgs(history); setInput(""); setBusy(true); setLive("");
+    const typed = (textIn ?? input).trim();
+    if ((!typed && !files.length) || busy || pending || ingesting) return;
+    const attachTexts = files.filter((f) => f.kind === "text").map((f) => `--- Attached file: ${f.name} ---\n${f.text}`).join("\n\n");
+    const fullText = [typed || "Read the attached file(s): summarise what matters and suggest what I should log or do.", attachTexts].filter(Boolean).join("\n\n");
+    let userMsg;
+    if (files.length) {
+      const blocks = [];
+      files.forEach((f) => {
+        if (f.kind === "image") blocks.push({ type: "image", source: { type: "base64", media_type: f.media_type, data: f.data }, _name: f.name });
+        else if (f.kind === "pdf") blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data }, _name: f.name });
+      });
+      blocks.push({ type: "text", text: fullText });
+      userMsg = { role: "user", content: blocks, _display: typed, _atts: files.map((f) => f.name) };
+    } else {
+      userMsg = { role: "user", content: fullText, _display: typed };
+    }
+    const history = [...msgs, userMsg];
+    setMsgs(history); setInput(""); setFiles([]); setBusy(true); setLive("");
     try { await runRounds(history); }
     catch (e) { setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + (e.message || "The AI service could not be reached.") }] }]); setLive(""); }
     setBusy(false);
@@ -2391,8 +2450,18 @@ ${serialiseForAI(data)}`;
 
   const renderMsg = (m, i) => {
     if (m.role === "user") {
-      if (Array.isArray(m.content)) return <div key={i} className="sub" style={{ textAlign: "right", margin: "0 0 2px" }}>✓ actioned</div>;
-      return <div key={i} className="bub user">{m.content}</div>;
+      if (Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"))
+        return <div key={i} className="sub" style={{ textAlign: "right", margin: "0 0 2px" }}>✓ actioned</div>;
+      const shown = m._display !== undefined ? m._display : (typeof m.content === "string" ? m.content : "");
+      return (
+        <div key={i} className="bub user">
+          {(m._atts || []).length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: shown ? 6 : 0 }}>
+              {m._atts.map((n, j) => <span key={j} style={{ fontSize: 10.5, background: "rgba(255,255,255,.18)", borderRadius: 6, padding: "2px 7px" }}>📎 {n}</span>)}
+            </div>)}
+          {shown}
+        </div>
+      );
     }
     const text = (m.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
     const tools = (m.content || []).filter((c) => c.type === "tool_use");
@@ -2414,7 +2483,10 @@ ${serialiseForAI(data)}`;
   const greet = hr < 5 ? "Late one" : hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : hr < 21 ? "Evening" : "Late one";
 
   return (
-    <div className="aview">
+    <div className="aview"
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <h2 className="h1">Assistant</h2>
         {canEdit && <label style={{ fontSize: 11.5, display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", color: "#5C6675", fontWeight: 700 }}>
@@ -2422,7 +2494,7 @@ ${serialiseForAI(data)}`;
           Apply changes without asking
         </label>}
       </div>
-      <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+      <div className="chat" style={{ flex: 1, overflowY: "auto", paddingBottom: 8, ...(dragOver ? { outline: "2px dashed #FD0E33", outlineOffset: -4, borderRadius: 12 } : {}) }}>
         {!msgs.length && !live && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16, padding: "16px 10px" }}>
             <ClipMark size={100} />
@@ -2430,8 +2502,8 @@ ${serialiseForAI(data)}`;
               <div style={{ fontWeight: 800, fontSize: 20, color: "#112138" }}>{greet}{who}. What can I sort for you?</div>
               <div className="sub" style={{ marginTop: 6, maxWidth: 470, marginLeft: "auto", marginRight: "auto" }}>
                 {canEdit
-                  ? "Ask about anything in the workspace, or tell me what to log, chase, update or close. Conversations reset when you leave this screen."
-                  : "Ask about anything in the workspace — view-only accounts can ask questions but not make changes."}
+                  ? "Ask about anything in the workspace, or tell me what to log, chase, update or close. Drop an email, spreadsheet, PDF or screenshot straight into the chat and I'll read it. Conversations reset when you leave this screen."
+                  : "Ask about anything in the workspace, or drop a file in for me to read — view-only accounts can ask questions but not make changes."}
               </div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 580 }}>
@@ -2452,11 +2524,24 @@ ${serialiseForAI(data)}`;
           </div>)}
         <div ref={endRef} />
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "6px 6px 6px 8px", background: "#fff", border: "1px solid #E1E7EC", borderRadius: 999, boxShadow: "0 4px 18px rgba(17,33,56,.07)" }}>
-        <input className="input" style={{ flex: 1, border: "none", background: "transparent", outline: "none", boxShadow: "none" }} placeholder="Ask, or tell it what to do…" value={input}
-          onChange={(e) => setInput(e.target.value)}
+      {(files.length > 0 || ingesting) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {files.map((f) => (
+            <span key={f._id} className="chip">
+              {f.kind === "image" ? "🖼" : "📎"} {f.name}
+              <span className="linkish" style={{ marginLeft: 6 }} onClick={() => setFiles((fs) => fs.filter((x) => x._id !== f._id))}>✕</span>
+            </span>))}
+          {ingesting && <span className="chip">Reading file…</span>}
+        </div>)}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, padding: "6px 6px 6px 8px", background: "#fff", border: "1px solid #E1E7EC", borderRadius: 999, boxShadow: "0 4px 18px rgba(17,33,56,.07)" }}>
+        <input ref={fileRef} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
+          onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+        <button style={{ border: "none", background: "none", fontSize: 17, cursor: "pointer", padding: "4px 6px", flex: "none" }}
+          title="Attach files (emails, Word, Excel, PDFs, screenshots)" aria-label="Attach files" onClick={() => fileRef.current?.click()}>📎</button>
+        <input className="input" style={{ flex: 1, border: "none", background: "transparent", outline: "none", boxShadow: "none" }} placeholder="Ask, tell it what to do, or drop a file…" value={input}
+          onChange={(e) => setInput(e.target.value)} onPaste={onPaste}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-        <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || !input.trim()} onClick={() => send()}>Send</button>
+        <button className="btn pri" style={{ borderRadius: 999 }} disabled={busy || !!pending || ingesting || (!input.trim() && !files.length)} onClick={() => send()}>Send</button>
       </div>
     </div>
   );
