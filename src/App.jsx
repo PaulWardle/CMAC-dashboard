@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { store } from "./lib/store";
 import { supabase } from "./lib/supabase";
 import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
-import { MONTHS, ytd, lastIdx, ragFor, fmtVal } from "./lib/bsc";
+import { MONTHS, ytd, ytdTarget, lastIdx, ragFor, ragYtd, fmtVal } from "./lib/bsc";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -488,6 +488,21 @@ function computeAlerts(d) {
     if (daysSince(m.updatedAt) > s.staleMob) push(2, `Mobilisation not updated for ${daysSince(m.updatedAt)}d — ${m.name}`, "mob", m.id);
     (m.checklist || []).filter((c) => c.signOff && !c.signedOff && daysUntil(c.due) !== null && daysUntil(c.due) <= 7).forEach((c) => push(2, `Sign-off outstanding — ${c.requirement} (${m.name})`, "mob", m.id));
   });
+  // Balanced scorecard: off-target and slipping measures on the lead entity.
+  const kpiLead = (d.kpi?.entities || [])[0];
+  if (kpiLead) {
+    let kn = 0;
+    kpiLead.categories.forEach((c) => c.metrics.forEach((m) => {
+      if (m.target === null || m.target === undefined || kn >= 6) return;
+      const li = lastIdx(m);
+      if (li < 0) return;
+      const yv = ytd(m);
+      const cur = m.cur[li], prevM = li > 0 ? m.cur[li - 1] : null;
+      const worse = prevM !== null && (m.dir === "low" ? cur > prevM : cur < prevM);
+      if (ragYtd(m) === "R") { push(2, `KPI off target — ${m.name}: YTD ${fmtVal(m, yv, true)} vs target ${fmtVal(m, ytdTarget(m), true)}`, "kpi"); kn++; }
+      else if (worse && ragFor(m, cur) !== "G") { push(1, `KPI slipping — ${m.name}: ${MONTHS[li]} ${fmtVal(m, cur, true)}, worse than ${fmtVal(m, prevM, true)}`, "kpi"); kn++; }
+    }));
+  }
   const inboxOld = d.workItems.filter((w) => w.status === "Inbox" && daysSince(w.created) > 7).length;
   if (inboxOld) push(1, `${inboxOld} inbox item${inboxOld > 1 ? "s" : ""} unprocessed for over 7 days`, "capture");
   const dismissed = new Set((d.dismissedAlerts || []).filter((x) => x.date === todayISO()).map((x) => x.key));
@@ -718,6 +733,13 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const activeProjects = data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage));
   const ragCount = (r) => activeProjects.filter((p) => p.rag === r).length;
   const activeMobs = data.mobs.filter((m) => m.stage !== "Closed");
+  const kpiLead = (data.kpi?.entities || [])[0];
+  const kpiCounts = { G: 0, A: 0, R: 0 };
+  const kpiReds = [];
+  if (kpiLead) kpiLead.categories.forEach((c) => c.metrics.forEach((m) => {
+    const r = ragYtd(m);
+    if (r) { kpiCounts[r]++; if (r === "R") kpiReds.push(m); }
+  }));
   const milestones = [...activeProjects.filter((p) => p.nextMilestone && p.nextMilestoneDate).map((p) => ({ d: p.nextMilestoneDate, t: p.nextMilestone + " — " + p.name, go: () => openProject(p.id) })),
     ...activeMobs.map((m) => ({ d: m.goLive, t: "Go-live — " + m.name, go: () => openMob(m.id) }))].filter((x) => x.d && daysUntil(x.d) >= -1).sort((a, b) => a.d.localeCompare(b.d)).slice(0, 6);
   const dismiss = (key) => mutate((d) => { d.dismissedAlerts = [...(d.dismissedAlerts || []), { key, date: todayISO() }]; return d; }, null);
@@ -726,6 +748,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
     else if (a.nav === "project") openProject(a.id);
     else if (a.nav === "mob") openMob(a.id);
     else if (a.nav === "capture") go("capture");
+    else if (a.nav === "kpi") go("kpis");
   };
   const show = (k) => focus === "All" || focus === k;
   return (
@@ -810,6 +833,20 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
               <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>{h.label}</span>
             </div>); })}
         </div>}
+        {(show("Executive") || show("This week")) && kpiLead && (kpiCounts.G + kpiCounts.A + kpiCounts.R) > 0 && <div className="card">
+          <div className="h2" style={{ marginTop: 0 }}>SLA & KPIs — {kpiLead.name}</div>
+          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+            <KpiDonut counts={kpiCounts} />
+            <div style={{ flex: 1, fontSize: 12.5, minWidth: 0 }}>
+              <b>{kpiCounts.G} on target · {kpiCounts.A} close · {kpiCounts.R} off target</b> <span style={{ color: "#8A93A1" }}>(YTD)</span>
+              {kpiReds.slice(0, 3).map((m) => (
+                <div key={m.id} style={{ color: "#FD0E33", fontWeight: 700, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  ▾ {m.name} — {fmtVal(m, ytd(m), true)} vs {fmtVal(m, ytdTarget(m), true)}
+                </div>))}
+              <div className="linkish" style={{ marginTop: 4 }} onClick={() => go("kpis")}>Open scorecard →</div>
+            </div>
+          </div>
+        </div>}
         {(show("Mobilisations") || show("Executive")) && <div className="card">
           <div className="h2" style={{ marginTop: 0 }}>Mobilisation readiness</div>
           {activeMobs.length === 0 && <div className="sub">No active mobilisations.</div>}
@@ -872,6 +909,19 @@ function Capture({ data, mutate, openItem }) {
     setErr(""); setIngesting(true);
     for (const f of incoming) {
       if (files.length + 1 > MAX_FILES) { setErr("Maximum " + MAX_FILES + " attachments per capture."); break; }
+      // A dropped workbook that matches the Balanced Scorecard template can go
+      // straight into SLA & KPIs instead of through AI capture.
+      if (/\.(xlsx|xlsm)$/i.test(f.name)) {
+        try {
+          const { parseScorecardWorkbook } = await import("./lib/bscParse");
+          const out = parseScorecardWorkbook(await f.arrayBuffer());
+          const ok = await askConfirm(`"${f.name}" looks like the Balanced Scorecard (${out.entities.length} scorecard tab(s)). Import it into SLA & KPIs, replacing the current scorecard numbers? Cancel to attach it here for AI capture instead.`);
+          if (ok) {
+            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
+            continue;
+          }
+        } catch (e) { /* not a scorecard workbook — treat as a normal attachment */ }
+      }
       try {
         const processed = await fileToCapture(f);
         setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
@@ -1782,8 +1832,8 @@ function KpiPage({ data, mutate, auth }) {
   const ent = kpi.entities.find((e) => e.id === entId) || kpi.entities[0];
   const allMetrics = ent ? ent.categories.flatMap((c) => c.metrics) : [];
   const counts = { G: 0, A: 0, R: 0 };
-  allMetrics.forEach((m) => { const r = ragFor(m, ytd(m)); if (r) counts[r]++; });
-  const reds = allMetrics.filter((m) => ragFor(m, ytd(m)) === "R");
+  allMetrics.forEach((m) => { const r = ragYtd(m); if (r) counts[r]++; });
+  const reds = allMetrics.filter((m) => ragYtd(m) === "R");
   const selMetric = allMetrics.find((m) => m.id === sel);
 
   const importFile = async (f) => {
@@ -1853,7 +1903,7 @@ function KpiPage({ data, mutate, auth }) {
                   <React.Fragment key={c.name}>
                     <tr className="kpi-cat"><td colSpan={15}><span className="sq">■</span> {c.name}</td></tr>
                     {c.metrics.map((m) => {
-                      const yv = ytd(m); const rag = ragFor(m, yv);
+                      const yv = ytd(m); const rag = ragYtd(m);
                       return (
                         <tr key={m.id} className={"kpi-row " + rag + (sel === m.id ? " on" : "")} onClick={() => setSel(sel === m.id ? null : m.id)}>
                           <td className="nm">{m.name}</td>
@@ -2018,6 +2068,20 @@ function ReportWorkspace({ data, mutate }) {
       srcFor(k).filter((s) => !draft.excluded.includes(k + ":" + s.id)).forEach((s) => lines.push(`- ${draft.overrides[k + ":" + s.id] || s.text}`));
       lines.push("");
     });
+    const lead = (data.kpi?.entities || [])[0];
+    if (lead) {
+      lines.push(`## Balanced scorecard — ${lead.name}`);
+      lead.categories.forEach((c) => {
+        const ms = c.metrics.filter((m) => lastIdx(m) >= 0);
+        if (!ms.length) return;
+        lines.push(`**${c.name}**`);
+        ms.forEach((m) => {
+          const li = lastIdx(m); const yv = ytd(m);
+          lines.push(`- ${m.name}: ${MONTHS[li]} ${fmtVal(m, m.cur[li], true)} · YTD ${fmtVal(m, yv, true)}${m.target !== null && m.target !== undefined ? ` vs target ${fmtVal(m, ytdTarget(m), true)} (${ragYtd(m) || "-"})` : ""}`);
+        });
+        lines.push("");
+      });
+    }
     lines.push(`_Prepared ${fmtD(todayISO())}. Generated from CMAC Operations Command Centre._`);
     return lines.join("\n");
   };
@@ -2054,6 +2118,22 @@ function ReportWorkspace({ data, mutate }) {
       if (draft.commentary[k]) body += `<p class="comm">${esc(draft.commentary[k])}</p>`;
       if (items.length) body += "<ul>" + items.map((s) => `<li>${esc(draft.overrides[k + ":" + s.id] || s.text)}</li>`).join("") + "</ul>";
     });
+    // Balanced scorecard page(s), in the pack's table design.
+    const lead = (data.kpi?.entities || [])[0];
+    if (lead && lead.categories.some((c) => c.metrics.some((m) => lastIdx(m) >= 0))) {
+      body += `<h2 class="pb">Balanced scorecard — ${esc(lead.name)}<span class="dot">.</span></h2>`;
+      body += `<table class="bsc"><thead><tr><th class="nm">Measure</th><th>Target</th>${MONTHS.map((mo) => `<th>${mo}</th>`).join("")}<th>YTD</th></tr></thead><tbody>`;
+      lead.categories.forEach((c) => {
+        body += `<tr><td class="cat" colspan="15"><span class="sq">■</span>&nbsp; ${esc(c.name)}</td></tr>`;
+        c.metrics.forEach((m) => {
+          const yv = ytd(m); const rag = ragYtd(m);
+          body += `<tr class="rag${rag}"><td class="nm">${esc(m.name)}</td><td class="tg">${m.target !== null && m.target !== undefined ? esc(fmtVal(m, m.target, true)) : "—"}</td>` +
+            m.cur.map((v) => `<td>${v === null ? '<span class="mut">—</span>' : esc(fmtVal(m, v, true))}</td>`).join("") +
+            `<td class="ytd">${esc(fmtVal(m, yv, true))}</td></tr>`;
+        });
+      });
+      body += "</tbody></table>";
+    }
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(outTitle)} — ${esc(draft.period)}</title>
 <style>
   @page { margin: 18mm 16mm; }
@@ -2067,6 +2147,21 @@ function ReportWorkspace({ data, mutate }) {
   p.comm { margin:0 0 6px; font-weight:600; }
   ul { margin:4px 0 0 18px; padding:0; } li { margin-bottom:5px; }
   .foot { margin-top:26px; color:#8A93A1; font-size:8.5pt; border-top:1px solid #E1E7EC; padding-top:8px; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pb { page-break-before: always; }
+  table.bsc { width:100%; border-collapse:collapse; font-size:6.6pt; margin-top:4px; }
+  .bsc th { background:#112138; color:#fff; padding:3px 4px; font-size:5.8pt; text-transform:uppercase; letter-spacing:.5px; text-align:right; }
+  .bsc th.nm { text-align:left; }
+  .bsc td { padding:2.5px 4px; border-bottom:0.5pt solid #E1E7EC; text-align:right; white-space:nowrap; }
+  .bsc td.cat { background:#112138; color:#fff; font-weight:800; text-align:left; letter-spacing:1px; font-size:6.2pt; text-transform:uppercase; }
+  .bsc td.cat .sq { color:#FD0E33; }
+  .bsc td.nm { text-align:left; font-weight:700; border-left:2.5pt solid #C6CDD8; }
+  .bsc tr.ragG td.nm { border-left-color:#2E7D32; }
+  .bsc tr.ragA td.nm { border-left-color:#F9A825; }
+  .bsc tr.ragR td.nm { border-left-color:#FD0E33; }
+  .bsc td.ytd { background:#EAF1F8; font-weight:800; }
+  .bsc td.tg { color:#5C6675; }
+  .bsc .mut { color:#B9C1CC; }
 </style></head><body>
 <div class="head"><img src="${window.location.origin}/cmac-logo.png" alt="cmac." /><span style="font-size:8.5pt;letter-spacing:2px;color:#5C6675;font-weight:800;">OPERATIONS COMMAND CENTRE</span></div>
 <h1>${esc(outTitle)}<span style="color:#FD0E33">.</span></h1>
@@ -2504,7 +2599,7 @@ function serialiseForAI(data) {
   const kg = (data.kpi?.entities || [])[0];
   const scorecard = kg ? lim(kg.categories.flatMap((c) => c.metrics
     .filter((m) => m.target !== null && m.target !== undefined)
-    .map((m) => { const li = lastIdx(m); const yv = ytd(m); return `${m.name}: last ${li >= 0 ? MONTHS[li] + " " + fmtVal(m, m.cur[li], true) : "n/a"}, YTD ${fmtVal(m, yv, true)} vs target ${fmtVal(m, m.target, true)} (${ragFor(m, yv) || "-"})`; }))
+    .map((m) => { const li = lastIdx(m); const yv = ytd(m); return `${m.name}: last ${li >= 0 ? MONTHS[li] + " " + fmtVal(m, m.cur[li], true) : "n/a"}, YTD ${fmtVal(m, yv, true)} vs YTD target ${fmtVal(m, ytdTarget(m), true)} (${ragYtd(m) || "-"})`; }))
     .join("; "), 2400) || undefined : undefined;
   return JSON.stringify({ today: todayISO(), context, scorecard, items, projects, mobs }).slice(0, 18000);
 }

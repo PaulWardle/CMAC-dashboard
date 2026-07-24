@@ -19,14 +19,31 @@ export function lastIdx(metric) {
   return idx;
 }
 
-/* RAG vs target: green = meets, amber = within 7.5%, red = worse. */
-export function ragFor(metric, value) {
-  if (metric.target === null || metric.target === undefined || value === null || value === undefined) return "";
-  const t = metric.target;
-  const good = metric.dir === "low" ? value <= t : value >= t;
+/* RAG vs a target: green = meets, amber = within 7.5%, red = worse. */
+function ragCompare(dir, value, t) {
+  if (t === null || t === undefined || value === null || value === undefined) return "";
+  const good = dir === "low" ? value <= t : value >= t;
   if (good) return "G";
   const rel = t === 0 ? 1 : Math.abs(value - t) / Math.abs(t);
   return rel <= 0.075 ? "A" : "R";
+}
+
+/* Monthly value vs the (monthly) target. */
+export function ragFor(metric, value) {
+  return ragCompare(metric.dir, value, metric.target ?? null);
+}
+
+/* Targets are monthly, so a summed YTD must compare against target ×
+   months-with-data; averaged measures compare against the target as-is. */
+export function ytdTarget(metric) {
+  if (metric.target === null || metric.target === undefined) return null;
+  const n = (metric.cur || []).filter((v) => v !== null).length;
+  if (!n) return null;
+  return metric.agg === "sum" ? metric.target * n : metric.target;
+}
+
+export function ragYtd(metric) {
+  return ragCompare(metric.dir, ytd(metric), ytdTarget(metric));
 }
 
 export function fmtVal(metric, v, compact) {
