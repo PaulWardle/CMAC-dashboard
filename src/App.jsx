@@ -1720,17 +1720,71 @@ function boardSources(data, section) {
     default: return [];
   }
 }
+/* COO 1:1 agenda — mirrors the user's prep structure. Each section carries
+   memory-jogger prompts shown as chips; suggested content is routed to the
+   right section from tracked work. */
+const COO_SECTIONS = [
+  ["exec", "Summary for COO", ["The week in three lines", "Anything he must hear from you first"]],
+  ["people", "People", ["Staff updates", "High-risk updates", "New role / position requests", "Training & development", "People exception reporting", "Succession planning", "Group POA", "T&Q updates"]],
+  ["resourcing", "Resourcing", ["Staffing levels", "Overtime costs", "Recruitment planning", "Turnover"]],
+  ["profit", "Profit", ["Operational performance — KPIs / OKRs / service levels", "Targets vs actuals", "Variance & impact", "Goals, targets, actions", "Departmental budget"]],
+  ["opsportal", "Ops Portal usage", ["Successes", "Challenges", "Offline working", "Blockers", "Dependencies"]],
+  ["priorities", "Priorities", ["Current focuses", "Achievements / wins", "Challenges / blockers / dependencies", "Project updates"]],
+  ["mobs", "Mobilisations", ["Readiness & go-lives", "Slippage or client risk"]],
+  ["decisions", "Decisions needed", ["What you need from him, by when"]],
+  ["aob", "AOB", ["Risks", "Escalations", "Support needed", "Budget", "Misc"]],
+];
+const COO_KEYWORDS = {
+  people: ["people", "training", "succession", "staff", "t&q", "poa", "capability", "exception report"],
+  resourcing: ["resourc", "staffing", "overtime", "recruit", "turnover", "rota", "org design"],
+  profit: ["kpi", "okr", "service level", "budget", "target", "variance", "performance", "commission", "cost"],
+  opsportal: ["ops portal", "portal", "offline", "digitalisation"],
+};
+
 function ReportWorkspace({ data, mutate, kind }) {
   const isBoard = kind === "board";
   const draftKey = isBoard ? "boardDraft" : "cooDraft";
   const draft = data[draftKey];
-  const sections = isBoard ? BP_SECTIONS : [["exec", "Summary for COO"], ["wins", "Wins"], ["projects", "Projects"], ["mobs", "Mobilisations"], ["concerns", "Concerns and asks"], ["decisions", "Decisions needed"]];
+  const sections = isBoard ? BP_SECTIONS : COO_SECTIONS;
+  const [tidying, setTidying] = useState("");
   const upd = (fn) => mutate((d) => { fn(d[draftKey]); return d; }, null);
   const srcFor = (k) => {
-    let s = boardSources(data, k);
-    if (!isBoard && k === "wins") s = [...data.updates.filter((u) => u.flags.coo).map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })), ...data.workItems.filter((w) => w.status === "Done" && w.flags.coo && daysSince(w.completed) <= 14).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.outcome ? " — " + w.outcome : ""}` }))];
-    if (!isBoard && k === "decisions") s = data.workItems.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status) && w.flags.coo).map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}` }));
-    return s;
+    if (isBoard) return boardSources(data, k);
+    const open = data.workItems.filter((w) => OPEN_STATUSES.includes(w.status));
+    if (k === "priorities") return [
+      ...open.filter((w) => w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 8).map((w) => ({ id: "w" + w.id, text: `Focus: ${w.title}${w.due ? " — due " + fmtD(w.due) : ""}` })),
+      ...data.updates.filter((u) => u.flags.coo).map((u) => ({ id: "u" + u.id, text: `Win: ${u.title}: ${u.summary}` })),
+      ...data.workItems.filter((w) => w.status === "Done" && w.flags.coo && daysSince(w.completed) <= 14).map((w) => ({ id: "wd" + w.id, text: `Win: ${w.title}${w.outcome ? " — " + w.outcome : ""}` })),
+      ...open.filter((w) => w.status === "Blocked").slice(0, 6).map((w) => ({ id: "wb" + w.id, text: `Blocked: ${w.title}${w.blocker ? " — " + w.blocker : ""}` })),
+      ...data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map((p) => ({ id: "p" + p.id, text: `${p.name} (${p.rag || "no RAG"}, ${p.progress ?? 0}%): ${p.position || "no position recorded"}` })),
+    ];
+    if (k === "mobs") return boardSources(data, "mobs");
+    if (k === "decisions") return open.filter((w) => w.type === "Decision")
+      .sort((a, b) => (b.flags?.coo ? 1 : 0) - (a.flags?.coo ? 1 : 0))
+      .map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}${w.extra?.recommended ? ". Recommended: " + w.extra.recommended : ""}` }));
+    if (k === "aob") return [
+      ...open.filter((w) => w.type === "Risk" && (w.flags.coo || ["Critical", "High"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `Risk: ${w.title}${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : ""}` })),
+      ...data.updates.filter((u) => u.flags.coo && u.rag && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `Concern: ${u.title}: ${u.summary}` })),
+      ...open.filter((w) => w.type === "Issue" && ["Critical", "High"].includes(w.priority)).slice(0, 6).map((w) => ({ id: "wi" + w.id, text: `Issue: ${w.title}` })),
+      ...open.filter((w) => w.status === "Waiting" && ["Critical", "High"].includes(w.priority)).slice(0, 5).map((w) => ({ id: "we" + w.id, text: `Possible escalation: ${w.title} — waiting on ${w.waitingOn || "?"}` })),
+    ];
+    const kws = COO_KEYWORDS[k] || [];
+    return open.filter((w) => {
+      const blob = (w.title + " " + (w.description || "") + " " + (w.workstream || "")).toLowerCase();
+      return kws.some((t) => blob.includes(t));
+    }).slice(0, 10).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.owner ? " (" + w.owner + ")" : ""}${w.due ? " — due " + fmtD(w.due) : ""}` }));
+  };
+  const tidy = async (k, label) => {
+    const notes = (draft.commentary[k] || "").trim();
+    if (!notes) return;
+    setTidying(k);
+    try {
+      const out = await askClaude(
+        `Rewrite these rough 1:1 prep scribbles as crisp briefing lines for a COO update. Keep every fact, name and number; do not invent or embellish anything; UK spelling; concise and direct. Return ONLY the briefing lines, one per line starting with "- ".\n\nSECTION: ${label}\nSCRIBBLES:\n${notes}`,
+        false, 900);
+      if (out && typeof out === "string") upd((x) => { x.commentary[k] = out.trim(); });
+    } catch (e) { alert("Could not tidy just now (" + (e.message || "AI error") + ")."); }
+    setTidying("");
   };
   const gaps = [];
   data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage) && !p.position).forEach((p) => gaps.push(`No current position recorded for ${p.name}`));
@@ -1792,15 +1846,25 @@ ${body}
           <button className="btn pri sm" onClick={generate}>Generate & copy draft</button>
         </span>
       </div>
-      <p className="sub">{isBoard ? "Monthly cycle — first week of each month. " : ""}Suggested content comes from flagged updates, completed work, projects, mobilisations, risks and decisions. Untick anything to exclude it; edit wording where needed; add your own commentary per section.</p>
+      <p className="sub">{isBoard
+        ? "Monthly cycle — first week of each month. Suggested content comes from flagged updates, completed work, projects, mobilisations, risks and decisions. Untick anything to exclude it; edit wording where needed; add your own commentary per section."
+        : "Structured around your 1:1 agenda. The grey chips under each heading are memory-joggers — scribble rough notes in the box (they save as you go), hit ✦ Tidy to turn them into crisp briefing lines, and untick or reword any auto-suggested content pulled from your tracked work."}</p>
       {isBoard && draft.deadline && daysUntil(draft.deadline) <= 5 && <div className={daysUntil(draft.deadline) <= 2 ? "warnbox" : "notebox"}>Board pack deadline {fmtD(draft.deadline)} — {daysUntil(draft.deadline)} day(s) away.</div>}
       {gaps.length > 0 && <div className="warnbox"><b>Gaps to close before drafting:</b><br />{gaps.slice(0, 5).map((g, i) => <span key={i}>• {g}<br /></span>)}</div>}
-      {sections.map(([k, label]) => {
+      {sections.map(([k, label, prompts]) => {
         const srcs = srcFor(k);
         return (
           <div key={k} className="card" style={{ marginBottom: 10 }}>
-            <div className="h2" style={{ marginTop: 0 }}>{label}</div>
-            <textarea className="ta" rows={2} placeholder="Your commentary for this section (appears first)…" value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div className="h2" style={{ marginTop: 0, flex: 1 }}>{label}</div>
+              {!isBoard && (draft.commentary[k] || "").trim() && (
+                <button className="btn sm" disabled={tidying === k} onClick={() => tidy(k, label)}>{tidying === k ? "Tidying…" : "✦ Tidy scribbles"}</button>)}
+            </div>
+            {!isBoard && prompts && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "2px 0 8px" }}>
+                {prompts.map((p) => <span key={p} className="chip" style={{ fontSize: 10.5 }}>{p}</span>)}
+              </div>)}
+            <textarea className="ta" rows={isBoard ? 2 : 3} placeholder={isBoard ? "Your commentary for this section (appears first)…" : "Scribbles — rough bullets are fine; ✦ Tidy sharpens them into briefing lines…"} value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
             {srcs.length === 0 && <div className="sub" style={{ marginTop: 6 }}>No suggested content — nothing flagged for this section yet.</div>}
             {srcs.map((s) => {
               const key = k + ":" + s.id;
