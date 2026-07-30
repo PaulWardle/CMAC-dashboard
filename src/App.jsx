@@ -68,25 +68,76 @@ const prioRank = (p) => ({ Critical: 0, High: 1, Medium: 2, Low: 3, Parked: 4 }[
    store.available, store.load(), store.save(data). */
 
 /* ---------- AI helper (via the /api/ai server proxy) ---------- */
-async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-  });
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json()).error || ""; } catch (e) {}
-    throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
+/* Forgiving JSON extraction for model output: strips fences and prose,
+   fixes trailing commas and stray control characters, and — if the reply was
+   cut off mid-structure — drops the dangling element and closes the brackets
+   so every complete record still comes through. */
+function parseJsonLoose(text) {
+  let s = String(text || "").replace(/```json|```/g, "").trim();
+  const firstObj = s.indexOf("{"), firstArr = s.indexOf("[");
+  const from = firstObj === -1 ? firstArr : firstArr === -1 ? firstObj : Math.min(firstObj, firstArr);
+  if (from === -1) throw new Error("The AI reply contained no JSON.");
+  s = s.slice(from);
+  const lastClose = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (lastClose !== -1) s = s.slice(0, lastClose + 1);
+  const deComma = (x) => x.replace(/,\s*([}\]])/g, "$1");
+  const deCtrl = (x) => x.replace(/[\u0000-\u001f]+/g, " ");
+  const attempts = [s, deComma(s), deComma(deCtrl(s))];
+  // Truncation repair: scan outside strings, find the last completed element,
+  // cut there and close whatever brackets remain open.
+  const scan = (str) => {
+    const stack = []; let inStr = false, esc = false, lastSafe = 0;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") stack.push("}");
+      else if (ch === "[") stack.push("]");
+      else if (ch === "}" || ch === "]") { stack.pop(); lastSafe = i + 1; }
+    }
+    return { open: stack.length > 0, lastSafe };
+  };
+  const info = scan(s);
+  if (info.open && info.lastSafe > 0) {
+    const cut = s.slice(0, info.lastSafe).replace(/,\s*$/, "");
+    const st = []; let inS = false, e = false;
+    for (const ch of cut) {
+      if (inS) { if (e) e = false; else if (ch === "\\") e = true; else if (ch === '"') inS = false; continue; }
+      if (ch === '"') inS = true;
+      else if (ch === "{") st.push("}");
+      else if (ch === "[") st.push("]");
+      else if (ch === "}" || ch === "]") st.pop();
+    }
+    const closed = cut + st.reverse().join("");
+    attempts.push(closed, deComma(deCtrl(closed)));
   }
-  const d = await res.json();
-  if (d.error) throw new Error(typeof d.error === "string" ? d.error : (d.error.message || "AI error"));
+  let lastErr;
+  for (const a of attempts) { try { return JSON.parse(a); } catch (err) { lastErr = err; } }
+  throw new Error("The AI reply was not valid JSON (" + (lastErr?.message || "parse failed") + ") — try again, or split very large dumps.");
+}
+
+async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
+  const call = async (mt) => {
+    const res = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_tokens: mt, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).error || ""; } catch (e) {}
+      throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
+    }
+    const d = await res.json();
+    if (d.error) throw new Error(typeof d.error === "string" ? d.error : (d.error.message || "AI error"));
+    return d;
+  };
+  let d = await call(maxTokens);
+  // If the answer hit the token ceiling mid-JSON, retry once with headroom.
+  if (expectJson && d.stop_reason === "max_tokens" && maxTokens < 12000) d = await call(Math.min(maxTokens * 2, 12000));
   const text = (d.content || []).map((c) => (c.type === "text" ? c.text : "")).join("");
   if (!expectJson) return text;
-  const clean = text.replace(/```json|```/g, "").trim();
-  const start = clean.indexOf("["); const startO = clean.indexOf("{");
-  const from = (start === -1) ? startO : (startO === -1 ? start : Math.min(start, startO));
-  return JSON.parse(clean.slice(from));
+  return parseJsonLoose(text);
 }
 
 /**
@@ -914,7 +965,7 @@ function Capture({ data, mutate, openItem }) {
       });
       blocks.push({ type: "text", text: captureParsePrompt(combined, data) });
       lastInput.current = combined;
-      const out = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 3000);
+      const out = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 6000);
       const recs = Array.isArray(out) ? out : (out.records || []);
       const list = recs.map((p) => ({ ...p, _sel: true, _id: uid() }));
       if (!list.length) setErr("Nothing extractable was found in that input.");
@@ -933,7 +984,7 @@ function Capture({ data, mutate, openItem }) {
       const current = proposals.map(({ _sel, _id, ...rest }) => rest);
       const prompt = captureParsePrompt(lastInput.current || "(input previously provided)", data) +
         `\n\nYOU PREVIOUSLY PROPOSED THESE RECORDS:\n${JSON.stringify(current)}\n\nYOU ASKED THE USER:\n${JSON.stringify(questions)}\n\nTHE USER ANSWERS:\n${answer.trim()}\n\nUpdate the records using these answers (adjust owners, dates, priorities, projects; add or remove records only if the answers imply it). Respond ONLY with the same JSON object shape — keep "questions" empty unless something important is still genuinely unresolved.`;
-      const out = await askClaude(prompt, true, 3000);
+      const out = await askClaude(prompt, true, 6000);
       const recs = Array.isArray(out) ? out : (out.records || []);
       if (recs.length) setProposals(recs.map((p) => ({ ...p, _sel: true, _id: uid() })));
       setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));

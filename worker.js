@@ -23,7 +23,7 @@ async function handleAI(request, env) {
   }
 
   const messages = body?.messages;
-  const maxTokens = Math.min(Number(body?.max_tokens) || 1024, 4096);
+  const maxTokens = Math.min(Number(body?.max_tokens) || 1024, 12000);
   if (!Array.isArray(messages) || messages.length === 0) {
     return json({ error: "`messages` array is required" }, 400);
   }

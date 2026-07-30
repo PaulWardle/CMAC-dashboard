@@ -29,7 +29,7 @@ function devAiProxy(env) {
           try {
             const parsed = JSON.parse(body || "{}");
             const messages = parsed.messages;
-            const maxTokens = Math.min(parsed.max_tokens || 1024, 4096);
+            const maxTokens = Math.min(parsed.max_tokens || 1024, 12000);
             const apiKey = process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY;
             if (!apiKey) return send(503, { error: "ANTHROPIC_API_KEY is not set in your local environment (.env)." });
             if (!Array.isArray(messages) || !messages.length) return send(400, { error: "messages are required" });
