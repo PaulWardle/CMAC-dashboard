@@ -14,10 +14,14 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (v) => {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number" && isFinite(v)) return v;
-  const s = String(v).replace(/[£$,%\s]/g, "").replace(/[()—–]/g, "");
+  let s = String(v).trim();
+  const negParen = /^\(.*\)$/.test(s); // accounting-style negative: (1,234)
+  s = s.replace(/[£$,%\s]/g, "").replace(/[()—–]/g, "");
   if (s === "" || s === "-" || /^n\/?a$/i.test(s)) return null;
-  const n = Number(s);
-  return isFinite(n) ? n : null;
+  let n = Number(s);
+  if (!isFinite(n)) return null;
+  if (negParen && n > 0) n = -n;
+  return n;
 };
 
 /* Infer how a metric behaves from its name, target and values. */
@@ -31,7 +35,7 @@ function inferMeta(name, target, values) {
     : /\(sec|\(min|time/.test(n) ? "sec"
     : "num";
   const agg = unit === "pct" || unit === "sec" || unit === "gbp2" || /^avg|average/.test(n) ? "avg" : "sum";
-  const lowerBetter = /cost|wait|handling|>\s*180|over ?time|turnover|spend|leaver|transfer|opex|touch point|manual tracking/.test(n);
+  const lowerBetter = /cost|wait|handling|>\s*180|over ?time|turnover|spend|leaver|transfer|opex|touch point|manual tracking|queue|abandon|complaint|breach|error rate/.test(n);
   return { unit, agg, dir: lowerBetter ? "low" : "high" };
 }
 

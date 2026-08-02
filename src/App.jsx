@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { flushSync } from "react-dom";
 import { store } from "./lib/store";
 import { supabase } from "./lib/supabase";
 import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
@@ -447,7 +448,8 @@ const Badge = ({ p }) => {
 };
 const Rag = ({ v }) => <span className={"rag " + (v === "Red" ? "R" : v === "Amber" ? "A" : v === "Green" ? "G" : "N")} title={v || "No RAG"} />;
 const Stat = ({ n, l, tone, onClick }) => (
-  <div className="stat" onClick={onClick} role="button" tabIndex={0}>
+  <div className="stat" onClick={onClick} role="button" tabIndex={0}
+    onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && onClick) { e.preventDefault(); onClick(); } }}>
     <div className={"n" + (tone ? " " + tone : "")}>{n}</div>
     <div className="l">{l}</div>
   </div>
@@ -573,20 +575,41 @@ function askPrompt(message) {
   if (_askFn) return _askFn({ kind: "prompt", message });
   return Promise.resolve(window.prompt(message));
 }
+/* One-button notice (replaces native alert(), which sandboxed frames drop). */
+function askInfo(message) {
+  if (_askFn) return _askFn({ kind: "info", message });
+  try { window.alert(message); } catch (e) { /* ignore */ }
+  return Promise.resolve(true);
+}
+/* Escape-to-close for any modal. */
+function useEscape(onClose) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+}
 function AskDialog({ req, onResolve }) {
   const [val, setVal] = useState("");
   useEffect(() => { setVal(""); }, [req]);
+  useEffect(() => {
+    if (!req) return;
+    const onKey = (e) => { if (e.key === "Escape") onResolve(req.kind === "prompt" ? null : req.kind === "info" ? true : false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [req, onResolve]);
   if (!req) return null;
   const isPrompt = req.kind === "prompt";
+  const isInfo = req.kind === "info";
   return (
-    <div className="modal-bg" style={{ zIndex: 90, alignItems: "center" }} onMouseDown={(e) => { if (e.target === e.currentTarget) onResolve(isPrompt ? null : false); }}>
+    <div className="modal-bg" role="dialog" aria-modal="true" style={{ zIndex: 90, alignItems: "center" }} onMouseDown={(e) => { if (e.target === e.currentTarget) onResolve(isPrompt ? null : isInfo ? true : false); }}>
       <div className="modal narrow" style={{ maxWidth: 460 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 12, lineHeight: 1.5 }}>{req.message}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 12, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{req.message}</div>
         {isPrompt && <input className="input" autoFocus value={val} onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onResolve(val); if (e.key === "Escape") onResolve(null); }} />}
+          onKeyDown={(e) => { if (e.key === "Enter") onResolve(val); }} />}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
-          <button className="btn" onClick={() => onResolve(isPrompt ? null : false)}>Cancel</button>
-          <button className="btn pri" autoFocus={!isPrompt} onClick={() => onResolve(isPrompt ? val : true)}>{isPrompt ? "Save" : "Yes, continue"}</button>
+          {!isInfo && <button className="btn" onClick={() => onResolve(isPrompt ? null : false)}>Cancel</button>}
+          <button className="btn pri" autoFocus={!isPrompt} onClick={() => onResolve(isPrompt ? val : true)}>{isPrompt ? "Save" : isInfo ? "OK" : "Yes, continue"}</button>
         </div>
       </div>
     </div>
@@ -597,6 +620,7 @@ function AskDialog({ req, onResolve }) {
    Work item modal (create / edit)
    ============================================================ */
 function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
+  useEscape(onClose);
   const isNew = !item.id;
   const [w, setW] = useState(() => ({
     id: item.id || uid(), title: "", description: "", type: "Action", status: "Inbox", priority: "Medium",
@@ -612,14 +636,14 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
   const setX = (k, v) => setW((x) => ({ ...x, extra: { ...x.extra, [k]: v } }));
   const typeOpts = CORE_TYPES.includes(w.type) ? CORE_TYPES : [w.type, ...CORE_TYPES];
   const save = () => {
-    if (!w.title.trim()) return alert("A title is required.");
+    if (!w.title.trim()) return askInfo("A title is required.");
     const out = { ...w, updatedAt: todayISO() };
     if (note.trim()) out.notes = [...(out.notes || []), { ts: todayISO(), text: note.trim() }];
     if (out.status === "Done" && !out.completed) out.completed = todayISO();
     onSave(out, isNew);
   };
   return (
-    <div className="modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-bg" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h3 className="h1">{isNew ? "New work item" : "Edit work item"} <span className="mono">{isNew ? "" : "#" + w.id}</span></h3>
@@ -713,7 +737,8 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
         {(w.notes || []).length === 0 && <div className="sub">No updates recorded yet.</div>}
         {(w.notes || []).slice().reverse().map((n, i) => <div key={i} style={{ fontSize: 12, padding: "4px 0", borderBottom: "1px solid #EDEFF2" }}><span className="mono">{fmtD(n.ts)}</span> — {n.text}</div>)}
         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-          <input className="input" placeholder="Add an update note…" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
+          <input className="input" placeholder="Add an update note… (Enter adds it to the history)" value={note} onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (note.trim()) { setW((x) => ({ ...x, notes: [...(x.notes || []), { ts: todayISO(), text: note.trim() }] })); setNote(""); } } }} />
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
@@ -948,7 +973,7 @@ function Capture({ data, mutate, openItem }) {
           const out = parseScorecardWorkbook(await f.arrayBuffer());
           const ok = await askConfirm(`"${f.name}" looks like the Balanced Scorecard (${out.entities.length} scorecard tab(s)). Import it into SLA & KPIs, replacing the current scorecard numbers? Cancel to attach it here for AI capture instead.`);
           if (ok) {
-            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities, guidance: out.guidance || [] }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
+            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: mergeScorecard(d2.kpi, out.entities), guidance: out.guidance || [] }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
             continue;
           }
         } catch (e) { /* not a scorecard workbook — treat as a normal attachment */ }
@@ -1119,7 +1144,7 @@ function Capture({ data, mutate, openItem }) {
           </div>))}
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn pri" onClick={() => approve()}>Approve selected ({proposals.filter((p) => p._sel).length})</button>
-          <button className="btn" onClick={() => { setProposals([]); setQuestions([]); setAnswer(""); }}>Discard all</button>
+          <button className="btn" onClick={async () => { if (await askConfirm(`Discard all ${proposals.length} proposed record(s)? The AI analysis of this dump will be lost.`)) { setProposals([]); setQuestions([]); setAnswer(""); setLearnings([]); } }}>Discard all</button>
         </div>
       </>}
 
@@ -1435,11 +1460,12 @@ function emptyProject(settings) {
     nextMilestone: "", nextMilestoneDate: "", country: settings.defaultCountry || "UK", workstream: "", client: "", updatedAt: todayISO() };
 }
 function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
+  useEscape(onClose);
   const [p, setP] = useState({ ...emptyProject(data.settings), ...JSON.parse(JSON.stringify(proj || {})) });
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   const isNew = !proj?.name;
   return (
-    <div className="modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-bg" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal">
         <h3 className="h1">{isNew ? "New project" : "Edit project"}</h3>
         <div className="frow" style={{ marginTop: 10 }}>
@@ -1464,7 +1490,7 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
           {!isNew && <button className="btn danger" onClick={async () => { if (await askConfirm("Delete this project? Linked work items are kept but unlinked.")) onDelete(p.id); }}>Delete</button>}
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn pri" onClick={() => { if (!p.name.trim()) return alert("Project name is required."); onSave({ ...p, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create project" : "Save"}</button>
+          <button className="btn pri" onClick={() => { if (!p.name.trim()) return askInfo("Project name is required."); onSave({ ...p, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create project" : "Save"}</button>
         </div>
       </div>
     </div>
@@ -1511,7 +1537,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
         ``, `## Decisions outstanding`, ...(items.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}`)),
         ``, `## Latest updates`, ...updates.slice(0, 3).map((u) => `- ${fmtD(u.date)}: ${u.summary}`),
         ``, `_Generated ${fmtD(todayISO())} from CMAC Operations Command Centre._`].join("\n");
-      copyText(t); alert("Project report copied to clipboard as Markdown.");
+      copyText(t); askInfo("Project report copied to clipboard as Markdown.");
     };
     return (
       <div>
@@ -1617,11 +1643,12 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
    Mobilisations — list + detail with readiness, go-live, hypercare
    ============================================================ */
 function MobModal({ data, mob, onSave, onClose, onDelete }) {
+  useEscape(onClose);
   const [m, setM] = useState(() => ({ id: uid(), name: "", client: "", kind: "New client", country: data.settings.defaultCountry, owner: "", sponsor: "", stage: "Discovery", rag: "Green", goLive: "", hypercareEnd: "", confidence: "Medium", position: "", checklist: [], golive: { recommendation: "", decision: "", decisionOwner: "", decisionDate: "", conditions: "", contingency: "" }, hypercare: [], updatedAt: todayISO(), ...JSON.parse(JSON.stringify(mob || {})) }));
   const set = (k, v) => setM((x) => ({ ...x, [k]: v }));
   const isNew = !mob?.name;
   return (
-    <div className="modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-bg" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal narrow">
         <h3 className="h1">{isNew ? "New mobilisation" : "Edit mobilisation"}</h3>
         <div className="frow" style={{ marginTop: 10 }}>
@@ -1641,7 +1668,7 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
           {!isNew && <button className="btn danger" onClick={async () => { if (await askConfirm("Delete this mobilisation and its checklist? Linked work items are kept but unlinked.")) onDelete(m.id); }}>Delete</button>}
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn pri" onClick={() => { if (!m.name.trim()) return alert("A name is required."); onSave({ ...m, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create mobilisation" : "Save"}</button>
+          <button className="btn pri" onClick={() => { if (!m.name.trim()) return askInfo("A name is required."); onSave({ ...m, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create mobilisation" : "Save"}</button>
         </div>
       </div>
     </div>
@@ -1805,6 +1832,35 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
    touching the numbers); every figure then feeds the Assistant, capture
    triage and reporting.
    ============================================================ */
+/* Re-imports keep the user's manual corrections: matched measures keep their
+   id and their edited unit / YTD rule / good-direction; workbook numbers win
+   where present but hand-keyed months survive where the workbook is blank;
+   workbook targets win only when the workbook actually sets one. */
+function mergeScorecard(prevKpi, parsedEntities) {
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const prevEnts = (prevKpi && prevKpi.entities) || [];
+  parsedEntities.forEach((e) => {
+    const pe = prevEnts.find((x) => norm(x.name) === norm(e.name));
+    if (!pe) return;
+    e.id = pe.id;
+    e.categories.forEach((c) => {
+      const pc = pe.categories.find((x) => norm(x.name) === norm(c.name));
+      if (!pc) return;
+      c.metrics.forEach((m) => {
+        const pm = pc.metrics.find((x) => norm(x.name) === norm(m.name));
+        if (!pm) return;
+        m.id = pm.id;
+        m.unit = pm.unit; m.agg = pm.agg; m.dir = pm.dir;
+        if (pm.userTarget) { m.target = pm.target; m.userTarget = true; }
+        else if (m.target == null && pm.target != null) m.target = pm.target;
+        m.cur = m.cur.map((v, i) => (v == null && pm.cur ? pm.cur[i] : v));
+        if (pm.prev) m.prev = (m.prev || new Array(12).fill(null)).map((v, i) => (v == null ? pm.prev[i] : v));
+      });
+    });
+  });
+  return parsedEntities;
+}
+
 function KpiDonut({ counts }) {
   const total = counts.G + counts.A + counts.R;
   if (!total) return null;
@@ -1885,12 +1941,12 @@ function KpiPage({ data, mutate, auth }) {
       const ok = await askConfirm(
         `Import "${f.name}"?\n\n${out.entities.length} scorecard(s): ${out.entities.map((e) => e.name).join(", ")}.\n${nMetrics} measures with monthly actuals, prior year and targets.` +
         (out.warnings.length ? "\n\n" + out.warnings.join("\n") : "") +
-        "\n\nThis replaces the current scorecard numbers (nothing else is touched).");
+        "\n\nWorkbook numbers replace the scorecard, but your manual corrections (targets, direction, YTD rules, hand-keyed months the workbook lacks) are kept for matching measures.");
       if (ok) {
-        mutate((d) => { d.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: out.entities, guidance: out.guidance || [] }; return d; }, "Balanced Scorecard imported: " + f.name);
+        mutate((d) => { d.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: mergeScorecard(d.kpi, out.entities), guidance: out.guidance || [] }; return d; }, "Balanced Scorecard imported: " + f.name);
         setSel(null); setEntId("");
       }
-    } catch (e) { alert("Could not import that workbook: " + (e.message || e)); }
+    } catch (e) { askInfo("Could not import that workbook: " + (e.message || e)); }
     setImporting(false);
   };
 
@@ -1997,7 +2053,7 @@ function KpiPage({ data, mutate, auth }) {
                   <div className="frow" style={{ marginTop: 8 }}>
                     <F label={"Target" + (selMetric.unit === "pct" ? " (%)" : "")}>
                       <input type="number" className="input" value={toDisp(selMetric, selMetric.target)} placeholder="no target"
-                        onChange={(e) => updMetric(selMetric.id, (m) => { m.target = toRaw(m, e.target.value); })} />
+                        onChange={(e) => updMetric(selMetric.id, (m) => { m.target = toRaw(m, e.target.value); m.userTarget = true; })} />
                     </F>
                     <F label="Good direction">
                       <select className="select" value={selMetric.dir} onChange={(e) => updMetric(selMetric.id, (m) => { m.dir = e.target.value; })}>
@@ -2122,7 +2178,7 @@ function ReportWorkspace({ data, mutate }) {
         `Rewrite these rough prep scribbles as crisp briefing lines for an executive update. Keep every fact, name and number; do not invent or embellish anything; UK spelling; concise and direct. Return ONLY the briefing lines, one per line starting with "- ".\n\nSECTION: ${label}\nSCRIBBLES:\n${notes}`,
         false, 900);
       if (out && typeof out === "string") upd((x) => { x.commentary[k] = out.trim(); });
-    } catch (e) { alert("Could not tidy just now (" + (e.message || "AI error") + ")."); }
+    } catch (e) { askInfo("Could not tidy just now (" + (e.message || "AI error") + ")."); }
     setTidying("");
   };
   const gaps = [];
@@ -2173,7 +2229,7 @@ function ReportWorkspace({ data, mutate }) {
   const generate = async () => {
     const md = buildMd();
     if (forBoard && !(await boardSweep(md))) return;
-    copyText(md); alert(`${outTitle} copied to clipboard as Markdown — paste into Word / email.` + (forBoard ? " People was excluded automatically and the rest passed the person-check. Once the pack is out, take a JSON backup from Settings." : ""));
+    copyText(md); askInfo(`${outTitle} copied to clipboard as Markdown — paste into Word / email.` + (forBoard ? " People was excluded automatically and the rest passed the person-check. Once the pack is out, take a JSON backup from Settings." : ""));
   };
   const printDraft = async () => {
     if (forBoard && !(await boardSweep(buildMd()))) return;
@@ -2247,7 +2303,7 @@ ${body}
 <div class="foot">Generated from the CMAC Operations Command Centre.</div>
 <script>window.addEventListener('load',function(){setTimeout(function(){window.print();},350);});</` + `script></body></html>`;
     const win = window.open("", "_blank");
-    if (!win) return alert("Your browser blocked the print window — allow pop-ups for this site.");
+    if (!win) return askInfo("Your browser blocked the print window — allow pop-ups for this site.");
     win.document.write(html); win.document.close();
   };
   return (
@@ -2317,7 +2373,7 @@ function Newsletter({ data, mutate }) {
     appr.forEach((c) => { lines.push(`## ${draft.headlines[c.id] || c.title}`, c.text, ""); });
     draft.articles.forEach((a) => { lines.push(`## ${a.title}`, a.body, ""); });
     lines.push(`_Compiled ${fmtD(todayISO())}._`);
-    copyText(lines.join("\n")); alert("Newsletter draft copied to clipboard as Markdown.");
+    copyText(lines.join("\n")); askInfo("Newsletter draft copied to clipboard as Markdown.");
   };
   return (
     <div>
@@ -2398,7 +2454,7 @@ function WeeklyReview({ data, mutate, go }) {
       `## Top five for next week`, ...wr.topFive.filter(Boolean).map((t, i) => `${i + 1}. ${t}`), "",
       `## Support / escalation needed`, wr.support || "(none noted)", "",
       `_Generated ${fmtD(todayISO())}._`];
-    copyText(lines.join("\n")); alert("Weekly summary copied to clipboard.");
+    copyText(lines.join("\n")); askInfo("Weekly summary copied to clipboard.");
   };
   return (
     <div>
@@ -2616,12 +2672,18 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
   const exportJson = () => downloadFile("cmac-occ-backup-" + todayISO() + ".json", JSON.stringify(data, null, 2), "application/json");
   const importJson = (file) => {
     const r = new FileReader();
-    r.onload = () => {
+    r.onload = async () => {
       try {
         const obj = JSON.parse(r.result);
-        if (!obj.workItems || !obj.projects) throw new Error("Not a recognisable backup file");
-        askConfirm("Replace ALL current data with this backup? This cannot be undone.").then((ok) => { if (ok) mutate(() => obj, "Data restored from backup"); });
-      } catch (e) { alert("Import failed: " + e.message); }
+        if (!Array.isArray(obj.workItems) || !Array.isArray(obj.projects) || typeof obj.settings !== "object") throw new Error("Not a recognisable backup file");
+        const ok = await askConfirm("Replace ALL current data with this backup? A safety copy of the current workspace will download first.");
+        if (!ok) return;
+        exportJson(); // safety copy before anything is replaced
+        // Merge over the seed shape so a truncated backup can't crash the app.
+        const base = seedData();
+        const merged = { ...base, ...obj, settings: { ...base.settings, ...(obj.settings || {}) }, context: { ...base.context, ...(obj.context || {}) }, kpi: obj.kpi || base.kpi };
+        mutate(() => merged, "Data restored from backup");
+      } catch (e) { askInfo("Import failed: " + e.message); }
     };
     r.readAsText(file);
   };
@@ -2735,7 +2797,8 @@ function Assistant({ data, mutate, auth, onClose }) {
   const [live, setLive] = useState("");
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
-  const [autoApply, setAutoApply] = useState(true);
+  const [autoApply, setAutoApplyState] = useState(() => { try { return localStorage.getItem("cmac-occ-autoapply") === "1"; } catch { return false; } });
+  const setAutoApply = (v) => { setAutoApplyState(v); try { localStorage.setItem("cmac-occ-autoapply", v ? "1" : "0"); } catch { /* ignore */ } };
   const [pending, setPending] = useState(null); // { history, tools:[tool_use…] }
   const [files, setFiles] = useState([]);
   const [ingesting, setIngesting] = useState(false);
@@ -2889,9 +2952,19 @@ ${serialiseForAI(data)}`;
       const tus = r.content.filter((c) => c.type === "tool_use");
       if (r.stop_reason !== "tool_use" || !tus.length) break;
       if (!autoApply) { setPending({ history, tools: tus }); return; }
-      const results = tus.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: execTool(tu) }));
+      const results = tus.map((tu) => { let out; flushSync(() => { out = execTool(tu); }); return { type: "tool_result", tool_use_id: tu.id, content: out }; });
       history = [...history, { role: "user", content: results }];
       setMsgs(history);
+    }
+    // If the round cap tripped mid-tool-call, answer the dangling tool_use so
+    // the conversation stays valid for the next message.
+    const last = history[history.length - 1];
+    if (last && last.role === "assistant" && Array.isArray(last.content)) {
+      const dangling = last.content.filter((c) => c.type === "tool_use");
+      if (dangling.length) {
+        history = [...history, { role: "user", content: dangling.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: "Not executed — the action limit for one reply was reached. Tell the user what still needs doing." })) }];
+        setMsgs(history);
+      }
     }
   };
 
@@ -2924,7 +2997,7 @@ ${serialiseForAI(data)}`;
     const { history, tools } = pending;
     setPending(null); setBusy(true);
     try {
-      const results = tools.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: approve ? execTool(tu) : "User declined this action." }));
+      const results = tools.map((tu) => { let out = "User declined this action."; if (approve) flushSync(() => { out = execTool(tu); }); return { type: "tool_result", tool_use_id: tu.id, content: out }; });
       await runRounds([...history, { role: "user", content: results }]);
     } catch (e) { setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + (e.message || "AI error") }] }]); }
     setBusy(false);
