@@ -116,11 +116,24 @@ function parseJsonLoose(text) {
   throw new Error("The AI reply was not valid JSON (" + (lastErr?.message || "parse failed") + ") — try again, or split very large dumps.");
 }
 
+/* The production AI proxy requires a signed-in user — attach the caller's
+   Supabase session token to every AI request. */
+async function aiHeaders() {
+  const h = { "Content-Type": "application/json" };
+  try {
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) h.Authorization = "Bearer " + data.session.access_token;
+    }
+  } catch (e) { /* local mode / no session */ }
+  return h;
+}
+
 async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
   const call = async (mt) => {
     const res = await fetch("/api/ai", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await aiHeaders(),
       body: JSON.stringify({ max_tokens: mt, messages: [{ role: "user", content: prompt }] }),
     });
     if (!res.ok) {
@@ -149,7 +162,7 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
 async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta }) {
   const res = await fetch("/api/ai", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await aiHeaders(),
     body: JSON.stringify({ stream: true, system, messages, tools, max_tokens: maxTokens }),
   });
   if (!res.ok || !res.body) {
@@ -3115,10 +3128,12 @@ export default function App({ auth }) {
 
   useEffect(() => {
     (async () => {
-      let d = null;
-      try { d = await store.load(); } catch (e) { }
+      let d = null, loadOk = true, cloudRev = null;
+      try { const r = await store.load(); d = r.doc; loadOk = r.ok; cloudRev = r.cloudRev; } catch (e) { loadOk = false; }
       let dirty = false;
-      if (!d) { d = seedData(); dirty = true; }
+      // Seed only when the cloud was reachable and genuinely has no document.
+      // Seeding after a FAILED read must never be saved over the shared copy.
+      if (!d) { d = seedData(); dirty = loadOk; }
       else { const s = stripDemo(d); if (s.changed) { d = s.data; dirty = true; } }
       // Identity: owners are real names in a shared workspace. Resolve the
       // signed-in user's display name and migrate any legacy "Me" owners.
@@ -3126,6 +3141,11 @@ export default function App({ auth }) {
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
+      // Repair records that arrived without a flags object (imports, AI) —
+      // several renderers dereference it directly.
+      d.workItems.forEach((w) => {
+        if (!w.flags || typeof w.flags !== "object") { w.flags = { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }; dirty = true; }
+      });
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
       }
@@ -3134,28 +3154,38 @@ export default function App({ auth }) {
       if (auth && auth.mode === "cloud" && !auth.canEdit) {
         d = { ...d, workItems: d.workItems.filter((w) => !w.private) };
       }
-      lastSynced.current = d.rev || 0;
+      // Guard saves against the CLOUD's rev, even when the local mirror is
+      // ahead of it (a previous session's save never reached Supabase).
+      lastSynced.current = cloudRev != null ? cloudRev : (d.rev || 0);
       setData(d);
-      if (dirty && canEdit) {
-        const res = await store.save(d, null);
-        if (!res.ok && !res.conflict) setStorageWarn(true);
-        else lastSynced.current = d.rev || 0;
+      if (!loadOk) setSyncNote("Couldn't reach the cloud copy just now — showing this device's last saved version. It will re-sync automatically once the connection returns.");
+      if (dirty && canEdit && loadOk) {
+        const res = await store.save(d, lastSynced.current || null);
+        if (res.cloudOk) lastSynced.current = d.rev || 0;
+        else if (!res.ok && !res.conflict) setStorageWarn(true);
       }
     })();
   }, []);
 
   // Save-as-you-go companion: when the app regains focus (phone unlock, tab
-  // switch), pull the latest copy if another device has saved a newer one.
+  // switch), pull the latest copy if another device has saved a newer one —
+  // and push ours if the cloud is behind (e.g. after an offline spell).
   useEffect(() => {
     const onVis = async () => {
       if (document.visibilityState && document.visibilityState !== "visible") return;
       try {
-        const remote = await store.load();
+        const r = await store.load();
+        const remote = r && r.ok ? r.doc : null;
         if (remote && (remote.rev || 0) > ((dataRef.current && dataRef.current.rev) || 0)) {
-          lastSynced.current = remote.rev || 0;
+          const hadPending = !!saveTimer.current;
+          if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+          lastSynced.current = r.cloudRev != null ? r.cloudRev : (remote.rev || 0);
           setData(auth && auth.mode === "cloud" && !auth.canEdit
             ? { ...remote, workItems: remote.workItems.filter((w) => !w.private) }
             : remote);
+          if (hadPending) setSyncNote("This workspace was updated on another device — now showing the latest version. Re-apply your last change if it's missing.");
+        } else if (dataRef.current && (dataRef.current.rev || 0) > (lastSynced.current || 0)) {
+          persist();
         }
       } catch (e) { }
     };
@@ -3164,30 +3194,64 @@ export default function App({ auth }) {
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); };
   }, []);
 
+  // Never lose the debounce window: when the tab hides or closes, flush the
+  // pending document to the synchronous local mirror. The cloud catches up on
+  // the next load (the mirror-ahead path in store.load).
+  useEffect(() => {
+    const flush = () => {
+      if (saveTimer.current && dataRef.current) store.mirror(dataRef.current);
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", onHide); };
+  }, []);
+
   useEffect(() => {
     registerAsk((req) => new Promise((resolve) => { askResolver.current = resolve; setAsk(req); }));
     return () => registerAsk(null);
   }, []);
   const resolveAsk = (v) => { setAsk(null); if (askResolver.current) { askResolver.current(v); askResolver.current = null; } };
 
+  const savingRef = useRef(false);
   const persist = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
+      saveTimer.current = null;
       if (!dataRef.current) return;
-      const res = await store.save(dataRef.current, lastSynced.current);
-      if (res.conflict && res.remote) {
-        // Another device saved first. Never overwrite — adopt the newer copy.
-        lastSynced.current = res.remote.rev || 0;
-        setData(res.remote);
-        setSyncNote("This workspace was updated on another device — now showing the latest version. Re-apply your last change if it's missing.");
-        setStorageWarn(false);
-      } else if (res.ok) {
-        lastSynced.current = (dataRef.current && dataRef.current.rev) || 0;
-        setSavedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
-        setStorageWarn(false);
-      } else {
-        setStorageWarn(true);
-      }
+      if (savingRef.current) { persist(); return; } // a save is in flight — try again after it lands
+      savingRef.current = true;
+      const doc = dataRef.current; // the exact document this save carries
+      try {
+        const res = await store.save(doc, lastSynced.current);
+        if (res.conflict && res.remote) {
+          const remoteRev = res.remote.rev || 0;
+          if (remoteRev >= (doc.rev || 0)) {
+            // Another device saved first. Never overwrite — adopt the newer copy.
+            lastSynced.current = remoteRev;
+            setData(res.remote);
+            setSyncNote("This workspace was updated on another device — now showing the latest version. Re-apply your last change if it's missing.");
+            setStorageWarn(false);
+          } else {
+            // Our copy is genuinely newer (offline catch-up) — re-guard
+            // against the cloud's true rev and save again.
+            lastSynced.current = remoteRev;
+            persist();
+          }
+        } else if (res.ok && (store.mode !== "cloud" || res.cloudOk)) {
+          lastSynced.current = doc.rev || 0; // the rev actually saved, not whatever arrived since
+          setSavedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
+          setStorageWarn(false);
+          setSyncNote((n) => (n && n.startsWith("Saved on this device")) ? "" : n);
+          if (dataRef.current !== doc) persist(); // edits arrived mid-flight — save them too
+        } else if (res.ok) {
+          // Local mirror only — the cloud write failed. Say so and retry.
+          setSyncNote("Saved on this device — cloud sync pending, retrying…");
+          setTimeout(() => persist(), 4000);
+        } else {
+          setStorageWarn(true);
+        }
+      } finally { savingRef.current = false; }
     }, 700);
   }, []);
 

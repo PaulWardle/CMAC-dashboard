@@ -1,4 +1,5 @@
 import { supabase, isConfigured } from "./supabase";
+import { store } from "./store";
 
 export { isConfigured };
 
@@ -38,13 +39,24 @@ export async function signUpWithPassword(email, password) {
   return supabase.auth.signUp({ email: email.trim(), password });
 }
 
-/** Fetch the caller's access profile (status + role). Null if none yet. */
+/** Fetch the CALLER'S access profile (status + role). Null if none yet.
+ *  Must filter to the caller's own row: admins can read every profile, and an
+ *  unfiltered single-row fetch starts failing the moment a second account
+ *  registers — which would lock the admin out. */
 export async function fetchProfile() {
   if (!supabase) return null;
-  const { data } = await supabase.from("profiles").select("status, role, email").maybeSingle();
+  const { data: u } = await supabase.auth.getUser();
+  const uid = u?.user?.id;
+  if (!uid) return null;
+  const { data } = await supabase.from("profiles")
+    .select("status, role, email")
+    .eq("user_id", uid)
+    .maybeSingle();
   return data || null;
 }
 
 export async function signOut() {
   if (supabase) await supabase.auth.signOut();
+  // Shared machines: don't leave the previous user's workspace mirror behind.
+  store.clearLocal();
 }

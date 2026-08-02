@@ -2,13 +2,13 @@ import { supabase } from "./supabase";
 
 /**
  * Persistence adapter — the single seam between the app and where its data
- * lives. The app only ever calls `store.load()` and `store.save(data)`.
+ * lives. The app only ever calls `store.load()` and `store.save(data, rev)`.
  *
  * Cloud mode (Supabase configured + signed in):
  *   the whole team shares ONE workspace document (public.shared_workspace,
- *   row id 'main'). Row Level Security lets any @cmacgroup.com account read
- *   it, but only the administrator account(s) write to it. A copy is also
- *   mirrored to localStorage so the app opens instantly / offline.
+ *   row id 'main'). Row Level Security lets approved accounts read it and
+ *   editors/admins write it. A copy is mirrored to localStorage so the app
+ *   opens instantly and survives a tab closing mid-save.
  *
  * Local mode (no Supabase configured):
  *   data lives in this browser's localStorage only.
@@ -41,59 +41,80 @@ function writeLocal(data) {
   }
 }
 
+/* Create the row if missing, or upgrade a legacy rev-less document; an
+   existing revisioned document is NEVER blind-overwritten — the caller gets
+   it back as a conflict instead. */
+async function saveUnguarded(payload) {
+  const { data: cur } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
+  if (!cur) {
+    const { error } = await supabase.from(TABLE).insert({ id: ROW_ID, ...payload });
+    return { cloudOk: !error, remote: null };
+  }
+  if (cur.data && cur.data.rev == null) {
+    const { error } = await supabase.from(TABLE).update(payload).eq("id", ROW_ID);
+    return { cloudOk: !error, remote: null };
+  }
+  return { cloudOk: false, remote: cur.data };
+}
+
 export const store = {
   available: true,
   mode: supabase ? "cloud" : "local",
 
+  /**
+   * Load the newest known copy. Returns { ok, doc, cloudRev }.
+   *  - ok=false: the cloud read FAILED (doc is the local mirror, maybe null).
+   *    Callers must never seed-and-save over the cloud in that state.
+   *  - cloudRev: the rev actually stored in the cloud (null if unknown/no row),
+   *    so saves stay guarded even when the local mirror is ahead of the cloud
+   *    (e.g. a tab closed before its debounced save reached Supabase).
+   */
   async load() {
     if (supabase && (await hasSession())) {
-      const { data, error } = await supabase
-        .from(TABLE)
-        .select("data")
-        .eq("id", ROW_ID)
-        .maybeSingle();
-      if (!error) return data ? data.data : null;
-      // On a transient error fall back to the local mirror rather than lose work.
+      const { data, error } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
+      if (error) return { ok: false, doc: readLocal(), cloudRev: null };
+      const cloud = data ? data.data : null;
+      const mirror = readLocal();
+      const doc = mirror && (mirror.rev || 0) > ((cloud && cloud.rev) || 0) ? mirror : cloud;
+      return { ok: true, doc, cloudRev: cloud ? cloud.rev || 0 : null };
     }
-    return readLocal();
+    return { ok: true, doc: readLocal(), cloudRev: null };
   },
 
   /**
-   * Save-as-you-go with optimistic concurrency. Every document carries a
-   * `rev` counter; the update only applies if the stored rev still matches
-   * `expectedRev`. If another device saved first, nothing is overwritten —
-   * we return { conflict: true, remote } and the app adopts the newer copy.
+   * Save-as-you-go with optimistic concurrency. The update only applies if
+   * the stored rev still matches `expectedRev`; on a mismatch nothing is
+   * overwritten and { conflict, remote } is returned. `cloudOk` reports the
+   * CLOUD write truthfully — a local-mirror-only save is not "saved".
    */
   async save(data, expectedRev) {
     let cloudOk = false;
     let remote = null;
     if (supabase && (await hasSession())) {
       const payload = { data, updated_at: new Date().toISOString() };
-      let q = supabase.from(TABLE).update(payload).eq("id", ROW_ID);
-      if (expectedRev != null) q = q.eq("data->>rev", String(expectedRev));
-      const { data: rows, error } = await q.select("id");
-      if (!error && rows && rows.length) {
-        cloudOk = true;
-      } else if (!error) {
-        // Nothing matched: first-ever save, a legacy doc without a rev, or a
-        // genuine conflict. Look at what's actually stored to decide.
-        const { data: cur } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
-        if (!cur) {
-          const { error: insErr } = await supabase.from(TABLE).insert({ id: ROW_ID, ...payload });
-          cloudOk = !insErr;
-        } else if (cur.data && cur.data.rev == null) {
-          const { error: updErr } = await supabase.from(TABLE).update(payload).eq("id", ROW_ID);
-          cloudOk = !updErr;
-        } else {
-          remote = cur.data; // conflict — someone else saved a newer rev
-        }
+      if (expectedRev != null) {
+        const { data: rows, error } = await supabase.from(TABLE).update(payload)
+          .eq("id", ROW_ID).eq("data->>rev", String(expectedRev)).select("id");
+        if (!error && rows && rows.length) cloudOk = true;
+        else if (!error) ({ cloudOk, remote } = await saveUnguarded(payload));
+      } else {
+        ({ cloudOk, remote } = await saveUnguarded(payload));
       }
     }
     if (remote) {
-      writeLocal(remote); // keep the offline mirror on the winning version
-      return { ok: false, conflict: true, remote };
+      return { ok: false, cloudOk: false, conflict: true, remote };
     }
     const localOk = writeLocal(data);
-    return { ok: supabase ? cloudOk || localOk : localOk, conflict: false };
+    return { ok: supabase ? cloudOk || localOk : localOk, cloudOk: supabase ? cloudOk : localOk, conflict: false };
+  },
+
+  /* Synchronous local mirror — for pagehide flushes. */
+  mirror(data) {
+    return writeLocal(data);
+  },
+
+  /* Remove this device's copy (called on sign-out — shared machines). */
+  clearLocal() {
+    try { localStorage.removeItem(APP_KEY); } catch { /* ignore */ }
   },
 };

@@ -14,7 +14,25 @@ function json(obj, status = 200) {
   });
 }
 
+/* The AI proxy spends real money — only signed-in workspace users may call
+   it. The caller sends their Supabase session token; we verify it against
+   Supabase (the publishable key is public by design). */
+async function requireUser(request, env) {
+  const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
+  const anonKey = env.SUPABASE_ANON_KEY || "sb_publishable_-UZzABw_r3oyN8DGTOqiaw_FQU-SYNW";
+  const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!token) return { ok: false, res: json({ error: "Sign in to use the AI." }, 401) };
+  const meRes = await fetch(supabaseUrl + "/auth/v1/user", {
+    headers: { Authorization: "Bearer " + token, apikey: anonKey },
+  });
+  if (!meRes.ok) return { ok: false, res: json({ error: "Your session has expired — sign in again." }, 401) };
+  return { ok: true };
+}
+
 async function handleAI(request, env) {
+  const gate = await requireUser(request, env);
+  if (!gate.ok) return gate.res;
+
   let body;
   try {
     body = await request.json();
@@ -157,8 +175,9 @@ function buildDigest(doc) {
   add("Decisions past required date", items.filter((w) => w.type === "Decision" && days(w.extra?.requiredBy || w.due) < 0).map((w) => w.title));
   add("Commitments due within 7 days", items.filter((w) => w.type === "Commitment" && days(w.due) !== null && days(w.due) >= 0 && days(w.due) <= 7).map((w) => `${w.title} — ${fmt(w.due)}`));
   add("Go-lives within 30 days", (doc.mobs || []).filter((m) => m.stage !== "Closed" && days(m.goLive) !== null && days(m.goLive) >= 0 && days(m.goLive) <= 30).map((m) => `${m.name} — ${fmt(m.goLive)} (${days(m.goLive)}d)`));
-  if (doc.boardDraft?.deadline && days(doc.boardDraft.deadline) !== null && days(doc.boardDraft.deadline) <= 5 && days(doc.boardDraft.deadline) >= 0) {
-    sec.push({ title: "Board pack", rows: ["Submission deadline " + fmt(doc.boardDraft.deadline) + " — " + days(doc.boardDraft.deadline) + " day(s) away"] });
+  const packDeadline = doc.cooDraft?.deadline || doc.boardDraft?.deadline;
+  if (packDeadline && days(packDeadline) !== null && days(packDeadline) <= 5 && days(packDeadline) >= 0) {
+    sec.push({ title: "Board pack", rows: ["Submission deadline " + fmt(packDeadline) + " — " + days(packDeadline) + " day(s) away"] });
   }
   const total = sec.reduce((n, s) => n + s.rows.length, 0);
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
