@@ -581,23 +581,34 @@ function askInfo(message) {
   try { window.alert(message); } catch (e) { /* ignore */ }
   return Promise.resolve(true);
 }
-/* Escape-to-close for any modal. */
-function useEscape(onClose) {
+/* Escape-to-close for any modal. Open dialogs register on a stack; Escape only
+   ever closes the TOP one, so cancelling a confirm that sits over an edit
+   modal never also discards the modal (and the unsaved work) beneath it. */
+const _escStack = [];
+function useEscape(onClose, active = true) {
+  const ref = useRef(onClose);
+  ref.current = onClose;
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    if (!active) return;
+    const entry = {};
+    _escStack.push(entry);
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (_escStack[_escStack.length - 1] !== entry) return; // a dialog above us owns Escape
+      ref.current && ref.current();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      const i = _escStack.indexOf(entry);
+      if (i !== -1) _escStack.splice(i, 1);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [active]);
 }
 function AskDialog({ req, onResolve }) {
   const [val, setVal] = useState("");
   useEffect(() => { setVal(""); }, [req]);
-  useEffect(() => {
-    if (!req) return;
-    const onKey = (e) => { if (e.key === "Escape") onResolve(req.kind === "prompt" ? null : req.kind === "info" ? true : false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [req, onResolve]);
+  useEscape(() => onResolve(req.kind === "prompt" ? null : req.kind === "info" ? true : false), !!req);
   if (!req) return null;
   const isPrompt = req.kind === "prompt";
   const isInfo = req.kind === "info";
@@ -1248,7 +1259,7 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
     <div>
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Action Board</h2>
-        <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={newItem}>+ New work item</button>
+        <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => newItem()}>+ New work item</button>
       </div>
       <div className="toolrow" style={{ marginTop: 8 }}>
         {["All", "My actions", "Delegated", "Critical", "Overdue"].map((v) => <button key={v} className={"btn sm" + (f.view === v ? " pri" : "")} onClick={() => setF({ ...f, view: v })}>{v}</button>)}
@@ -1832,10 +1843,14 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
    touching the numbers); every figure then feeds the Assistant, capture
    triage and reporting.
    ============================================================ */
-/* Re-imports keep the user's manual corrections: matched measures keep their
-   id and their edited unit / YTD rule / good-direction; workbook numbers win
-   where present but hand-keyed months survive where the workbook is blank;
-   workbook targets win only when the workbook actually sets one. */
+/* Re-imports keep the user's manual corrections: a matched measure keeps its
+   id, and any setting the user explicitly changed (target / YTD rule /
+   good-direction — tracked by user* flags) stays pinned. Everything else takes
+   the fresh import's inference, so parser improvements actually land. Workbook
+   numbers win where present but hand-keyed months survive where the workbook
+   is blank. Matching prefers the same-named category but falls back to the
+   whole entity (a renamed category shouldn't orphan its metrics), and each
+   previous metric matches at most once so duplicate names can't share an id. */
 function mergeScorecard(prevKpi, parsedEntities) {
   const norm = (s) => String(s || "").trim().toLowerCase();
   const prevEnts = (prevKpi && prevKpi.entities) || [];
@@ -1843,15 +1858,25 @@ function mergeScorecard(prevKpi, parsedEntities) {
     const pe = prevEnts.find((x) => norm(x.name) === norm(e.name));
     if (!pe) return;
     e.id = pe.id;
+    const consumed = new Set();
+    const findPrev = (catName, name) => {
+      const pc = pe.categories.find((x) => norm(x.name) === norm(catName));
+      const scopes = pc ? [pc, ...pe.categories.filter((x) => x !== pc)] : pe.categories;
+      for (const scope of scopes) {
+        const hit = (scope.metrics || []).find((x) => norm(x.name) === norm(name) && !consumed.has(x));
+        if (hit) return hit;
+      }
+      return null;
+    };
     e.categories.forEach((c) => {
-      const pc = pe.categories.find((x) => norm(x.name) === norm(c.name));
-      if (!pc) return;
       c.metrics.forEach((m) => {
-        const pm = pc.metrics.find((x) => norm(x.name) === norm(m.name));
+        const pm = findPrev(c.name, m.name);
         if (!pm) return;
+        consumed.add(pm);
         m.id = pm.id;
-        m.unit = pm.unit; m.agg = pm.agg; m.dir = pm.dir;
-        if (pm.userTarget) { m.target = pm.target; m.userTarget = true; }
+        if (pm.userAgg) { m.agg = pm.agg; m.userAgg = true; }
+        if (pm.userDir) { m.dir = pm.dir; m.userDir = true; }
+        if (pm.userTarget && pm.target != null) { m.target = pm.target; m.userTarget = true; }
         else if (m.target == null && pm.target != null) m.target = pm.target;
         m.cur = m.cur.map((v, i) => (v == null && pm.cur ? pm.cur[i] : v));
         if (pm.prev) m.prev = (m.prev || new Array(12).fill(null)).map((v, i) => (v == null ? pm.prev[i] : v));
@@ -2056,12 +2081,12 @@ function KpiPage({ data, mutate, auth }) {
                         onChange={(e) => updMetric(selMetric.id, (m) => { m.target = toRaw(m, e.target.value); m.userTarget = true; })} />
                     </F>
                     <F label="Good direction">
-                      <select className="select" value={selMetric.dir} onChange={(e) => updMetric(selMetric.id, (m) => { m.dir = e.target.value; })}>
+                      <select className="select" value={selMetric.dir} onChange={(e) => updMetric(selMetric.id, (m) => { m.dir = e.target.value; m.userDir = true; })}>
                         <option value="high">Higher is better</option><option value="low">Lower is better</option>
                       </select>
                     </F>
                     <F label="YTD calculation">
-                      <select className="select" value={selMetric.agg} onChange={(e) => updMetric(selMetric.id, (m) => { m.agg = e.target.value; })}>
+                      <select className="select" value={selMetric.agg} onChange={(e) => updMetric(selMetric.id, (m) => { m.agg = e.target.value; m.userAgg = true; })}>
                         <option value="sum">Sum of months</option><option value="avg">Average of months</option>
                       </select>
                     </F>
@@ -2536,7 +2561,7 @@ function Archive({ data, openItem }) {
 
 /* Team & Access — admin-only management of accounts, approvals and roles.
    Talks to the `profiles` table directly; RLS restricts it to admins. */
-function TeamPanel({ onTeamChange }) {
+function TeamPanel({ onTeamChange, auth }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -2591,7 +2616,16 @@ function TeamPanel({ onTeamChange }) {
             </>}
             {p.status === "approved" && <>
               <select className="select" style={{ width: 130 }} value={p.role}
-                onChange={(e) => patch(p.user_id, { role: e.target.value })}>
+                onChange={async (e) => {
+                  const role = e.target.value;
+                  // Demoting yourself is one click from locking every admin
+                  // feature — make sure it's deliberate.
+                  if (p.role === "admin" && role !== "admin" && auth?.email && p.email === auth.email) {
+                    const ok = await askConfirm("This is YOUR account — dropping your own admin role means you can no longer manage the team, approve accounts or undo this change. Only another admin could restore you. Continue?");
+                    if (!ok) { await load(); return; }
+                  }
+                  patch(p.user_id, { role });
+                }}>
                 <option value="viewer">View only</option>
                 <option value="editor">Can edit</option>
                 <option value="admin">Admin</option>
@@ -2669,7 +2703,11 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
   const s = data.settings;
   const set = (k, v) => mutate((d) => { d.settings[k] = v; return d; }, null);
   const fileRef = useRef(null);
-  const exportJson = () => downloadFile("cmac-occ-backup-" + todayISO() + ".json", JSON.stringify(data, null, 2), "application/json");
+  // Always export/restore against the CURRENT workspace — `data` captured in a
+  // FileReader callback can be several edits old by the time it runs.
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const exportJson = () => downloadFile("cmac-occ-backup-" + todayISO() + ".json", JSON.stringify(dataRef.current, null, 2), "application/json");
   const importJson = (file) => {
     const r = new FileReader();
     r.onload = async () => {
@@ -2682,6 +2720,10 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
         // Merge over the seed shape so a truncated backup can't crash the app.
         const base = seedData();
         const merged = { ...base, ...obj, settings: { ...base.settings, ...(obj.settings || {}) }, context: { ...base.context, ...(obj.context || {}) }, kpi: obj.kpi || base.kpi };
+        // The backup's rev is history — keep the LIVE revision line so the
+        // restore saves cleanly instead of losing a conflict to the cloud copy
+        // (which would silently undo the restore).
+        merged.rev = dataRef.current.rev;
         mutate(() => merged, "Data restored from backup");
       } catch (e) { askInfo("Import failed: " + e.message); }
     };
@@ -2694,7 +2736,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
   return (
     <div>
       <h2 className="h1">Settings & Data</h2>
-      {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} />}
+      {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} auth={auth} />}
       {(!auth || auth.canEdit) && <ContextPanel data={data} mutate={mutate} />}
       {auth?.mode === "cloud" && supabase && <ChangePassword />}
       <div className="h2">Profile</div>
@@ -2944,27 +2986,36 @@ ${serialiseForAI(data)}`;
 
   const runRounds = async (history) => {
     let rounds = 0;
+    let needsClose = true; // still true after the loop = the round cap tripped
     while (rounds++ < 6) {
       const r = await streamClaude({ system: systemPrompt(), messages: toApiHistory(history), tools: canEdit ? TOOLS : undefined, onDelta: setLive });
       const asst = { role: "assistant", content: r.content };
       history = [...history, asst];
       setMsgs(history); setLive("");
       const tus = r.content.filter((c) => c.type === "tool_use");
-      if (r.stop_reason !== "tool_use" || !tus.length) break;
+      if (r.stop_reason !== "tool_use" || !tus.length) { needsClose = false; break; }
       if (!autoApply) { setPending({ history, tools: tus }); return; }
       const results = tus.map((tu) => { let out; flushSync(() => { out = execTool(tu); }); return { type: "tool_result", tool_use_id: tu.id, content: out }; });
       history = [...history, { role: "user", content: results }];
       setMsgs(history);
     }
-    // If the round cap tripped mid-tool-call, answer the dangling tool_use so
-    // the conversation stays valid for the next message.
+    // A reply cut off mid-tool-call (max_tokens despite the retry): answer the
+    // dangling tool_use so the thread stays valid, then close out below.
     const last = history[history.length - 1];
     if (last && last.role === "assistant" && Array.isArray(last.content)) {
       const dangling = last.content.filter((c) => c.type === "tool_use");
       if (dangling.length) {
-        history = [...history, { role: "user", content: dangling.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: "Not executed — the action limit for one reply was reached. Tell the user what still needs doing." })) }];
+        history = [...history, { role: "user", content: dangling.map((tu) => ({ type: "tool_result", tool_use_id: tu.id, content: "Not executed — the reply was cut off before this action could run. Tell the user what happened and what still needs doing." })) }];
         setMsgs(history);
+        needsClose = true;
       }
+    }
+    // The model never saw the final tool results and the user has no closing
+    // reply — one last call with tools off forces a plain-text wrap-up.
+    if (needsClose) {
+      const r = await streamClaude({ system: systemPrompt(), messages: toApiHistory(history), onDelta: setLive });
+      history = [...history, { role: "assistant", content: r.content }];
+      setMsgs(history); setLive("");
     }
   };
 
@@ -3214,10 +3265,16 @@ export default function App({ auth }) {
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
-      // Repair records that arrived without a flags object (imports, AI) —
-      // several renderers dereference it directly.
+      // Repair records that arrived without the shapes the renderers
+      // dereference directly (imports, AI output, older backups): flags
+      // objects, notes arrays, extra objects.
       d.workItems.forEach((w) => {
         if (!w.flags || typeof w.flags !== "object") { w.flags = { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }; dirty = true; }
+        if (w.notes != null && !Array.isArray(w.notes)) { w.notes = []; dirty = true; }
+        if (w.extra != null && typeof w.extra !== "object") { w.extra = {}; dirty = true; }
+      });
+      (d.updates || []).forEach((u) => {
+        if (!u.flags || typeof u.flags !== "object") { u.flags = { board: false, coo: false, news: false }; dirty = true; }
       });
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
@@ -3257,7 +3314,9 @@ export default function App({ auth }) {
             ? { ...remote, workItems: remote.workItems.filter((w) => !w.private) }
             : remote);
           if (hadPending) setSyncNote("This workspace was updated on another device — now showing the latest version. Re-apply your last change if it's missing.");
-        } else if (dataRef.current && (dataRef.current.rev || 0) > (lastSynced.current || 0)) {
+        } else if (canEdit && dataRef.current && (dataRef.current.rev || 0) > (lastSynced.current || 0)) {
+          // canEdit guard: a view-only account holds a FILTERED copy (private
+          // items removed) and must never write it over the shared document.
           persist();
         }
       } catch (e) { }
@@ -3286,7 +3345,18 @@ export default function App({ auth }) {
   }, []);
   const resolveAsk = (v) => { setAsk(null); if (askResolver.current) { askResolver.current(v); askResolver.current = null; } };
 
+  // Flush the debounce window on unmount (sign-out swaps App for the login
+  // screen): mirror the pending document so nothing is lost mid-debounce.
+  useEffect(() => () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      if (dataRef.current) store.mirror(dataRef.current);
+    }
+  }, []);
+
   const savingRef = useRef(false);
+  const retryWait = useRef(4000); // cloud-retry backoff: 4s doubling to 60s
   const persist = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -3297,6 +3367,10 @@ export default function App({ auth }) {
       const doc = dataRef.current; // the exact document this save carries
       try {
         const res = await store.save(doc, lastSynced.current);
+        if (res.signedOut) {
+          setSyncNote("Your session has ended — sign out and back in to keep saving. Nothing was written.");
+          return;
+        }
         if (res.conflict && res.remote) {
           const remoteRev = res.remote.rev || 0;
           if (remoteRev >= (doc.rev || 0)) {
@@ -3313,14 +3387,18 @@ export default function App({ auth }) {
           }
         } else if (res.ok && (store.mode !== "cloud" || res.cloudOk)) {
           lastSynced.current = doc.rev || 0; // the rev actually saved, not whatever arrived since
+          retryWait.current = 4000;
           setSavedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
           setStorageWarn(false);
           setSyncNote((n) => (n && n.startsWith("Saved on this device")) ? "" : n);
           if (dataRef.current !== doc) persist(); // edits arrived mid-flight — save them too
         } else if (res.ok) {
-          // Local mirror only — the cloud write failed. Say so and retry.
+          // Local mirror only — the cloud write failed. Say so and retry,
+          // backing off so a long outage doesn't hammer the network.
           setSyncNote("Saved on this device — cloud sync pending, retrying…");
-          setTimeout(() => persist(), 4000);
+          const wait = retryWait.current;
+          retryWait.current = Math.min(retryWait.current * 2, 60000);
+          setTimeout(() => persist(), wait);
         } else {
           setStorageWarn(true);
         }
@@ -3348,7 +3426,9 @@ export default function App({ auth }) {
     </div>);
 
   const openItem = (w) => setEditItem(w);
-  const newItem = (preset) => setEditItem({ ...(typeof preset === "object" && preset ? preset : {}) });
+  // Accept only a plain preset object — a click EVENT passed by an unwrapped
+  // onClick handler would smuggle circular DOM refs into the modal's state.
+  const newItem = (preset) => setEditItem({ ...(preset && typeof preset === "object" && !preset.nativeEvent ? preset : {}) });
   const go = (k) => { setNav(k); setNavOpen(false); if (k !== "projects") setProjDetail(null); if (k !== "mobs") setMobDetail(null); };
   const toggleAssistant = () => {
     if (nav === "assistant") go(prevNav.current || "command");
@@ -3367,6 +3447,9 @@ export default function App({ auth }) {
     const fresh = seedData();
     fresh.workItems = []; fresh.projects = []; fresh.mobs = []; fresh.updates = []; fresh.benefits = []; fresh.lessons = []; fresh.meetings = [];
     fresh.activity = [{ ts: Date.now(), text: "System reset — starting fresh" }];
+    // Stay on the live revision line — a rev restarting at 1 loses the next
+    // save's conflict check to the cloud copy, which would undo the reset.
+    fresh.rev = (dataRef.current && dataRef.current.rev) || 0;
     mutate(() => fresh, null);
   };
   const alertCount = computeAlerts(data).filter((a) => a.sev >= 2).length;

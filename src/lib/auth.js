@@ -39,7 +39,9 @@ export async function signUpWithPassword(email, password) {
   return supabase.auth.signUp({ email: email.trim(), password });
 }
 
-/** Fetch the CALLER'S access profile (status + role). Null if none yet.
+/** Fetch the CALLER'S access profile (status + role). Null means "no profile
+ *  row yet"; a fetch FAILURE throws instead, so the gate can offer a retry
+ *  rather than telling an approved user they're awaiting approval.
  *  Must filter to the caller's own row: admins can read every profile, and an
  *  unfiltered single-row fetch starts failing the moment a second account
  *  registers — which would lock the admin out. */
@@ -48,10 +50,11 @@ export async function fetchProfile() {
   const { data: u } = await supabase.auth.getUser();
   const uid = u?.user?.id;
   if (!uid) return null;
-  const { data } = await supabase.from("profiles")
+  const { data, error } = await supabase.from("profiles")
     .select("status, role, email")
     .eq("user_id", uid)
     .maybeSingle();
+  if (error) throw new Error(error.message || "Could not check your access.");
   return data || null;
 }
 

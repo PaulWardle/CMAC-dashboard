@@ -14,19 +14,40 @@ function json(obj, status = 200) {
   });
 }
 
-/* The AI proxy spends real money — only signed-in workspace users may call
-   it. The caller sends their Supabase session token; we verify it against
-   Supabase (the publishable key is public by design). */
+/* The AI proxy spends real money — only signed-in, APPROVED workspace users
+   may call it. The caller sends their Supabase session token; we verify it
+   against Supabase (the publishable key is public by design) and then check
+   their profile status with that same token (RLS lets a user read their own
+   row). A Supabase outage answers 503 — never "session expired", which would
+   bounce every user to the login screen for a problem that isn't theirs. */
 async function requireUser(request, env) {
   const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
   const anonKey = env.SUPABASE_ANON_KEY || "sb_publishable_-UZzABw_r3oyN8DGTOqiaw_FQU-SYNW";
   const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (!token) return { ok: false, res: json({ error: "Sign in to use the AI." }, 401) };
-  const meRes = await fetch(supabaseUrl + "/auth/v1/user", {
-    headers: { Authorization: "Bearer " + token, apikey: anonKey },
-  });
-  if (!meRes.ok) return { ok: false, res: json({ error: "Your session has expired — sign in again." }, 401) };
-  return { ok: true };
+  const unavailable = () => ({ ok: false, res: json({ error: "The sign-in service is temporarily unavailable — try again in a minute." }, 503) });
+  try {
+    const meRes = await fetch(supabaseUrl + "/auth/v1/user", {
+      headers: { Authorization: "Bearer " + token, apikey: anonKey },
+    });
+    if (meRes.status === 401 || meRes.status === 403) {
+      return { ok: false, res: json({ error: "Your session has expired — sign in again." }, 401) };
+    }
+    if (!meRes.ok) return unavailable();
+    const me = await meRes.json();
+    const profRes = await fetch(
+      supabaseUrl + "/rest/v1/profiles?user_id=eq." + encodeURIComponent(me.id) + "&select=status",
+      { headers: { apikey: anonKey, Authorization: "Bearer " + token } }
+    );
+    if (!profRes.ok) return unavailable();
+    const prof = (await profRes.json())[0];
+    if (!prof || prof.status !== "approved") {
+      return { ok: false, res: json({ error: "Your account isn't approved yet — AI features unlock once access is granted." }, 403) };
+    }
+    return { ok: true };
+  } catch {
+    return unavailable();
+  }
 }
 
 async function handleAI(request, env) {
@@ -237,7 +258,7 @@ export default {
       const supabaseUrl = env.SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
       const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
       if (!serviceKey) return json({ error: "Not configured (missing SUPABASE_SERVICE_ROLE_KEY)." }, 503);
-      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "") || url.searchParams.get("token") || "";
+      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const meRes = await fetch(supabaseUrl + "/auth/v1/user", { headers: { Authorization: "Bearer " + token, apikey: serviceKey } });
       if (!meRes.ok) return json({ error: "Sign in first, then open this from the app." }, 401);
       const me = await meRes.json();

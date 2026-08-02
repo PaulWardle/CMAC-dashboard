@@ -153,6 +153,23 @@ function Login({ onSignedIn }) {
   );
 }
 
+function ProfileErrorScreen({ msg, onRetry, onSignOut }) {
+  return (
+    <Shell>
+      <Logo />
+      <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, letterSpacing: "-.5px", margin: "34px 0 10px" }}>
+        Can't check your access<span style={{ color: RED }}>.</span>
+      </h1>
+      <div style={{ background: "#1B3050", borderLeft: "4px solid " + RED, borderRadius: 10, padding: "16px 18px", color: "#C9D1DD", fontSize: 14, lineHeight: 1.6, fontWeight: 500 }}>
+        You're signed in, but we couldn't reach the server to confirm your access
+        {msg ? <> (<span style={{ color: "#fff" }}>{msg}</span>)</> : null}. This is usually a connection blip — try again in a moment.
+      </div>
+      <button style={btnStyle} onClick={onRetry}>Try again</button>
+      <button style={ghostBtn} onClick={onSignOut}>Sign out</button>
+    </Shell>
+  );
+}
+
 function PendingScreen({ email, status, onRefresh, onSignOut }) {
   const rejected = status === "rejected" || status === "suspended";
   return (
@@ -177,12 +194,19 @@ function PendingScreen({ email, status, onRefresh, onSignOut }) {
 export default function AuthGate() {
   const [state, setState] = useState({ loading: true, session: null });
   const [profile, setProfile] = useState(null);
-  const [profLoading, setProfLoading] = useState(false);
+  const [profErr, setProfErr] = useState(null);
 
   const loadProfile = async () => {
-    setProfLoading(true);
-    setProfile(await fetchProfile());
-    setProfLoading(false);
+    setProfErr(null);
+    try {
+      const p = await fetchProfile();
+      // No row yet = a brand-new account whose profile hasn't been created —
+      // genuinely pending. A FAILED fetch throws and lands in the catch, so an
+      // approved user on a flaky connection sees a retry, not "awaiting approval".
+      setProfile(p || { status: "pending", role: "viewer" });
+    } catch (e) {
+      setProfErr(e?.message || "Could not check your access.");
+    }
   };
 
   useEffect(() => {
@@ -198,8 +222,9 @@ export default function AuthGate() {
   }, []);
 
   useEffect(() => {
+    setProfile(null);
+    setProfErr(null);
     if (state.session?.mode === "cloud") loadProfile();
-    else setProfile(null);
   }, [state.session?.user?.id]);
 
   if (state.loading) return <Splash text="Starting your command centre…" />;
@@ -209,8 +234,9 @@ export default function AuthGate() {
   const email = state.session?.user?.email || (isConfigured ? "" : "Local device");
 
   if (mode === "cloud") {
-    if (profLoading && !profile) return <Splash text="Checking your access…" />;
-    const status = profile?.status || "pending";
+    if (!profile && profErr) return <ProfileErrorScreen msg={profErr} onRetry={loadProfile} onSignOut={signOut} />;
+    if (!profile) return <Splash text="Checking your access…" />;
+    const status = profile.status || "pending";
     if (status !== "approved") {
       return <PendingScreen email={email} status={status} onRefresh={loadProfile} onSignOut={signOut} />;
     }
