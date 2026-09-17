@@ -20,16 +20,34 @@ const C = {
   ink: "#16233A", mut: "#5C6675", amber: "#B45309", green: "#1A7F44",
   redS: "#FD0E33", blue: "#1D5FBF", navySoft: "#1B3050",
 };
-const STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Review","Done","Parked","Cancelled"];
+const STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Done","Cancelled"];
+const LEGACY_STATUS = { "Review": "In Progress", "Parked": "Planned" };
 const OPEN_STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Review"];
 const TYPES = ["Action","Task","Milestone","Risk","Issue","Dependency","Decision","Commitment","Chaser","Follow-up","Idea","Improvement","Information request","Meeting action","Mobilisation action","Board action","Audit action"];
 /* The editor offers only the types that actually behave differently; legacy
    values on existing items remain valid and selectable on those items. */
 const CORE_TYPES = ["Action","Risk","Issue","Dependency","Decision","Commitment","Idea"];
-const PRIORITIES = ["Critical","High","Medium","Low","Parked"];
+const PRIORITIES = ["Critical","High","Medium","Low"];
 const RAGS = ["Red","Amber","Green"];
 const COUNTRIES = ["UK","Spain","Portugal","Greece","Group"];
-const WORKSTREAMS = ["KPI, board & COO reporting","Minicabit performance","AI supplier call handling","Supplier transitions","Australia mobilisation","Hotel commission recovery","European T&Q standardisation","Planning team resilience","Ops Portal & digitalisation","Client mobilisations","Country operating reviews","Resource planning & org design","Service performance","Automation & AI","Operational controls","People & capability","Client delivery","Aviation","Rail","Supply","Technology","Business Change"];
+/* Functions, not initiatives. A specific piece of work — Australia, the
+   Minicabit programme, hotel commission recovery — is a Project or a
+   Mobilisation; this says what KIND of work it is. */
+const WORKSTREAMS = ["Group Operations","Operations","Training & Quality","Business Change","Mobilisations","Commercial","People","Supply","Technology","Reporting"];
+/* Items filed under the old initiative-shaped list keep a sensible home. */
+const LEGACY_WORKSTREAMS = {
+  "KPI, board & COO reporting": "Reporting", "Country operating reviews": "Reporting",
+  "Minicabit performance": "Operations", "Service performance": "Operations",
+  "AI supplier call handling": "Technology", "Ops Portal & digitalisation": "Technology",
+  "Automation & AI": "Technology", "Technology": "Technology",
+  "Supplier transitions": "Supply", "Hotel commission recovery": "Commercial",
+  "Australia mobilisation": "Mobilisations", "Client mobilisations": "Mobilisations",
+  "European T&Q standardisation": "Training & Quality",
+  "Planning team resilience": "People", "Resource planning & org design": "People",
+  "People & capability": "People", "Client delivery": "Operations",
+  "Operational controls": "Group Operations", "Business Change": "Business Change",
+  "Aviation": "Operations", "Rail": "Operations", "Supply": "Supply",
+};
 /* Seven stages, not eleven. Discovery and Definition were both "working out
    what this is"; Delivery and Implementation were the same thing twice; and
    Hypercare and BAU Handover belong to a mobilisation's lifecycle, not a
@@ -45,12 +63,32 @@ const LEGACY_STAGES = {
   "Hypercare": "Delivery",
   "BAU Handover": "Delivery",
 };
-const MOB_STAGES = ["Discovery","Handover from Commercial","Design","Build","Readiness","Go-live Approval","Go-live","Hypercare","BAU Handover","Closed","On Hold"];
-const MOB_WORKSTREAMS = ["Scope & assumptions","Governance","Operational design","Booking flows","Customer contact channels","Systems & access","Data & reporting","Supply readiness","Hotel readiness","Transport readiness","Resource planning","Recruitment","Training","Quality assurance","Finance & billing","Communications","Escalation model","Business continuity","Testing","Cutover","Hypercare","BAU handover"];
-const CONFIDENTIALITY = ["General internal","Restricted","Senior leadership","Board confidential","Client confidential","People confidential"];
+const MOB_STAGES = ["Scoping","Preparing & Planning","Ready","Go-live","Hypercare","Closed"];
+const LEGACY_MOB_STAGES = {
+  "Discovery": "Scoping", "Handover from Commercial": "Scoping",
+  "Design": "Preparing & Planning", "Build": "Preparing & Planning",
+  "Readiness": "Ready", "Go-live Approval": "Ready",
+  // Handover is the last live phase, not the end of one — mapping it to
+  // Closed would drop a running mobilisation off the active list.
+  "BAU Handover": "Hypercare",
+  // "On Hold" is no longer a stage — a held mobilisation keeps the stage it
+  // actually reached and is marked blocked instead.
+  "On Hold": "Preparing & Planning",
+};
+const MOB_WORKSTREAMS = ["Scope & governance","Operational design","Systems & access","Data & reporting","Supply & hotels","Transport","Resourcing & training","Finance & billing","Communications","Testing & cutover"];
+/* Most restricted first. "Internal" is the working default — the newsletter
+   draws on Internal and Open, since it circulates inside CMAC. */
+const CONFIDENTIALITY = ["Private","Execs","Internal","Open"];
+const SHAREABLE = ["Internal","Open"];
+const LEGACY_CONF = {
+  "General internal": "Internal", "Restricted": "Execs",
+  "Senior leadership": "Execs", "Board confidential": "Execs",
+  "Client confidential": "Execs", "People confidential": "Private",
+};
 const BENEFIT_TYPES = ["Revenue","Cost saving","Cost avoidance","Time saving","Productivity","Service improvement","Client satisfaction","Risk reduction","Control improvement","Capability improvement","Compliance improvement"];
 const BENEFIT_CONF = ["Confirmed","High confidence","Medium confidence","Indicative","Unverified"];
-const DECISION_STATUSES = ["Draft","Required","Awaiting Information","Submitted","Decided","Deferred","Withdrawn"];
+const DECISION_STATUSES = ["Required","Awaiting information","Decided","Deferred","Withdrawn"];
+const LEGACY_DECISION = { "Draft": "Required", "Submitted": "Awaiting information", "Awaiting Information": "Awaiting information" };
 const HORIZONS = ["Now","Next","Later","Parked"];
 const DEFAULT_SETTINGS = {
   userName: "Group Operations Director",
@@ -317,7 +355,7 @@ function stripDemo(d) {
     project: "", mob: "", workstream: "", country: (d.settings && d.settings.defaultCountry) || "UK", client: "",
     due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
     rag: "", nextAction: "Add snags as you find them", blocker: "", horizon: "Later", rank: 90,
-    flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "General internal",
+    flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal",
     notes: [], extra: {}, outcome: "",
   });
   d.activity = [...(d.activity || []).slice(-199), { ts: Date.now(), text: "Demonstration data removed — running on real data only" }];
@@ -589,12 +627,14 @@ function computeAlerts(d) {
   d.workItems.filter((w) => w.status === "Done" && !w.outcome && daysSince(w.completed) <= 30).forEach((w) => push(1, `Completed without recorded outcome — ${w.title}`, "item", w.id));
   d.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage)).forEach((p) => {
     if (p.rag === "Red") push(3, `Project RED — ${p.name}`, "project", p.id);
+    if (p.blocked) push(2, `Project blocked${p.blockedBy ? " on " + p.blockedBy : ""} — ${p.name}${p.blocker ? " (" + p.blocker + ")" : ""}`, "project", p.id);
     if (daysSince(p.updatedAt) > s.staleProject) push(2, `Project not updated for ${daysSince(p.updatedAt)}d — ${p.name}`, "project", p.id);
     if (!p.nextMilestone && p.stage !== "On Hold") push(1, `No next milestone — ${p.name}`, "project", p.id);
   });
   d.mobs.filter((m) => !["Closed"].includes(m.stage)).forEach((m) => {
     const g = daysUntil(m.goLive);
     if (m.rag === "Red") push(3, `Mobilisation RED — ${m.name}`, "mob", m.id);
+    if (m.blocked) push(2, `Mobilisation blocked${m.blockedBy ? " on " + m.blockedBy : ""} — ${m.name}${m.blocker ? " (" + m.blocker + ")" : ""}`, "mob", m.id);
     if (g !== null && g >= 0 && g <= 30) push(g <= 7 ? 3 : 2, `Go-live in ${g}d — ${m.name}`, "mob", m.id);
     if (daysSince(m.updatedAt) > s.staleMob) push(2, `Mobilisation not updated for ${daysSince(m.updatedAt)}d — ${m.name}`, "mob", m.id);
     (m.checklist || []).filter((c) => c.signOff && !c.signedOff && daysUntil(c.due) !== null && daysUntil(c.due) <= 7).forEach((c) => push(2, `Sign-off outstanding — ${c.requirement} (${m.name})`, "mob", m.id));
@@ -680,7 +720,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
     client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
     rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50,
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
-    confidentiality: "General internal", notes: [], extra: {}, outcome: "", ...JSON.parse(JSON.stringify(item)),
+    confidentiality: "Internal", notes: [], extra: {}, outcome: "", ...JSON.parse(JSON.stringify(item)),
   }));
   const [note, setNote] = useState("");
   const [more, setMore] = useState(false);
@@ -951,7 +991,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
           {activeProjects.slice(0, 6).map((p) => { const h = projectHealth(data, p); return (
             <div key={p.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openProject(p.id)}>
               <span style={{ flex: 1 }}><Rag v={p.rag} />{p.name}</span>
-              <span className="chip">{p.stage}</span>
+              <span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
               <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>{h.label}</span>
             </div>); })}
         </div>}
@@ -1089,7 +1129,7 @@ function Capture({ data, mutate, openItem }) {
     mutate((d) => {
       d.workItems.push({ id: uid(), title: text.trim().slice(0, 140), description: text.trim(), type: "Action", status: "Inbox", priority: "Medium", owner: meName(d), waitingOn: "", project: "", mob: "", workstream: "", country: d.settings.defaultCountry,
         client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: "", blocker: "",
-        horizon: "Next", rank: 50, flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "General internal", notes: [], extra: {}, outcome: "" });
+        horizon: "Next", rank: 50, flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal", notes: [], extra: {}, outcome: "" });
       return d;
     }, "Quick-captured to inbox");
     setText("");
@@ -1107,7 +1147,7 @@ function Capture({ data, mutate, openItem }) {
           project: proj ? proj.id : "", mob: mob ? mob.id : "", workstream: p.workstream || "", country: COUNTRIES.includes(p.country) ? p.country : d.settings.defaultCountry,
           client: "", due: p.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: p.nextAction || "",
           blocker: "", horizon: HORIZONS.includes(p.horizon) ? p.horizon : "Next", rank: 50, flags: { board: !!p.flags?.board, coo: !!p.flags?.coo, news: !!p.flags?.news, groupWeekly: false, ukWeekly: false },
-          confidentiality: "General internal",
+          confidentiality: "Internal",
           notes: [{ ts: todayISO(), text: "Created from capture (AI-proposed, user-approved)" + (p.reasoning ? " — " + p.reasoning : "") + (p.duplicateOf ? " · Possible duplicate of: " + p.duplicateOf : "") }],
           extra: {}, outcome: "" });
       });
@@ -1509,7 +1549,8 @@ function Decisions({ data, openItem, newItem }) {
 function emptyProject(settings) {
   return { id: uid(), name: "", code: "", objective: "", owner: "", sponsor: "", stage: "Idea", rag: "Green",
     start: todayISO(), target: "", forecast: "", progress: 0, confidence: "Medium", position: "",
-    nextMilestone: "", nextMilestoneDate: "", country: settings.defaultCountry || "UK", workstream: "", client: "", updatedAt: todayISO() };
+    nextMilestone: "", nextMilestoneDate: "", country: settings.defaultCountry || "UK", workstream: "", client: "",
+    blocked: false, blockedBy: "", blocker: "", updatedAt: todayISO() };
 }
 function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
   useEscape(onClose);
@@ -1538,6 +1579,16 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
           <F label={"Progress (" + p.progress + "%)"}><input type="range" min="0" max="100" step="5" value={p.progress} onChange={(e) => set("progress", +e.target.value)} style={{ width: "100%" }} /></F>
           <F label="Objective" span><textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} /></F>
           <F label="Current position" span><textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} /></F>
+          <F label="Held up?" span>
+            <label className="checkline" style={{ padding: 0 }}>
+              <input type="checkbox" checked={!!p.blocked} onChange={(e) => set("blocked", e.target.checked)} />
+              <span>Blocked — waiting on someone else to move</span>
+            </label>
+          </F>
+          {p.blocked && <>
+            <F label="Waiting on"><input className="input" value={p.blockedBy || ""} onChange={(e) => set("blockedBy", e.target.value)} placeholder="Person, team or department" /></F>
+            <F label="What is needed" span><input className="input" value={p.blocker || ""} onChange={(e) => set("blocker", e.target.value)} placeholder="The decision, approval or input you are waiting for" /></F>
+          </>}
           <F label="Next milestone"><input className="input" value={p.nextMilestone} onChange={(e) => set("nextMilestone", e.target.value)} /></F>
           <F label="Milestone date"><input type="date" className="input" value={p.nextMilestoneDate} onChange={(e) => set("nextMilestoneDate", e.target.value)} /></F>
         </div>
@@ -1574,7 +1625,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
     const addUpdate = () => {
       if (!updText.trim()) return;
       mutate((d) => {
-        d.updates.push({ id: uid(), title: updText.slice(0, 80), date: todayISO(), period: monthName(), summary: updText, detail: "", rag: p.rag, project: p.id, mob: "", country: p.country, workstream: p.workstream, owner: "Me", confidentiality: "General internal", flags: { board: false, coo: false, news: false } });
+        d.updates.push({ id: uid(), title: updText.slice(0, 80), date: todayISO(), period: monthName(), summary: updText, detail: "", rag: p.rag, project: p.id, mob: "", country: p.country, workstream: p.workstream, owner: "Me", confidentiality: "Internal", flags: { board: false, coo: false, news: false } });
         const pr = d.projects.find((x) => x.id === p.id); if (pr) pr.updatedAt = todayISO();
         return d;
       }, "Update added to " + p.name);
@@ -1598,7 +1649,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
           <button className="btn sm" onClick={() => setDetail(null)}>← Portfolio</button>
           <h2 className="h1" style={{ margin: 0 }}><Rag v={p.rag} />{p.name} <span className="mono">{p.code}</span></h2>
-          <span className="chip">{p.stage}</span>
+          <span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>Health: {h.label}</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button className="btn sm" onClick={() => setEditing(p)}>Edit project</button>
@@ -1663,7 +1714,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
         {active.map((p) => { const h = projectHealth(data, p); const items = data.workItems.filter((w) => w.project === p.id); return (
           <div key={p.id} className="card" style={{ cursor: "pointer", borderTop: "3px solid " + (p.rag === "Red" ? "#FD0E33" : p.rag === "Amber" ? "#D97706" : "#1A7F44") }} onClick={() => setDetail(p.id)}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <b>{p.name}</b><span className="chip">{p.stage}</span>
+              <b>{p.name}</b><span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
             </div>
             <div className="sub" style={{ margin: "3px 0 6px" }}>{p.objective?.slice(0, 90)}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
@@ -1718,6 +1769,16 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
           <F label="Go-live date"><input type="date" className="input" value={m.goLive} onChange={(e) => set("goLive", e.target.value)} /></F>
           <F label="Hypercare ends"><input type="date" className="input" value={m.hypercareEnd} onChange={(e) => set("hypercareEnd", e.target.value)} /></F>
           <F label="Current position" span><textarea className="ta" value={m.position || ""} onChange={(e) => set("position", e.target.value)} /></F>
+          <F label="Held up?" span>
+            <label className="checkline" style={{ padding: 0 }}>
+              <input type="checkbox" checked={!!m.blocked} onChange={(e) => set("blocked", e.target.checked)} />
+              <span>Blocked — waiting on someone else to move</span>
+            </label>
+          </F>
+          {m.blocked && <>
+            <F label="Waiting on"><input className="input" value={m.blockedBy || ""} onChange={(e) => set("blockedBy", e.target.value)} placeholder="Person, team or department" /></F>
+            <F label="What is needed" span><input className="input" value={m.blocker || ""} onChange={(e) => set("blocker", e.target.value)} placeholder="The decision, approval or input you are waiting for" /></F>
+          </>}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
           {!isNew && <button className="btn danger" onClick={async () => { if (await askConfirm("Delete this mobilisation and its checklist? Linked work items are kept but unlinked.")) onDelete(m.id); }}>Delete</button>}
@@ -1751,7 +1812,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
           <button className="btn sm" onClick={() => setDetail(null)}>← Mobilisations</button>
           <h2 className="h1" style={{ margin: 0 }}><Rag v={m.rag} />{m.name}</h2>
-          <span className="chip">{m.stage}</span>
+          <span className="chip">{m.stage}</span>{m.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[m.blockedBy && "Waiting on " + m.blockedBy, m.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip">{m.client}</span>
           {g !== null && <span className={"badge " + (g <= 7 ? "bg-crit" : g <= 30 ? "bg-high" : "bg-med")}>{g >= 0 ? `Go-live in ${g}d (${fmtD(m.goLive)})` : `Live ${Math.abs(g)}d`}</span>}
           <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
@@ -1859,7 +1920,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", marginTop: 10 }}>
         {data.mobs.map((m) => { const r = mobReadiness(m); const g = daysUntil(m.goLive); return (
           <div key={m.id} className="card" style={{ cursor: "pointer", borderTop: "3px solid " + (m.rag === "Red" ? "#FD0E33" : m.rag === "Amber" ? "#D97706" : "#1A7F44") }} onClick={() => setDetail(m.id)}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}><b>{m.name}</b><span className="chip">{m.stage}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><b>{m.name}</b><span className="chip">{m.stage}</span>{m.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[m.blockedBy && "Waiting on " + m.blockedBy, m.blocker].filter(Boolean).join(" — ")}>blocked</span>}</div>
             <div className="sub" style={{ margin: "2px 0 6px" }}>{m.client} · {m.country}{m.demo ? " · demo" : ""}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
               <div className="prog" style={{ flex: 1 }}><div style={{ width: r.pct + "%" }} /></div><span className="mono">{r.pct}% ready</span>
@@ -2432,8 +2493,8 @@ function Newsletter({ data, mutate }) {
     ...data.updates.filter((u) => u.flags.news).map((u) => ({ id: "u" + u.id, conf: u.confidentiality, text: u.summary, title: u.title })),
     ...data.workItems.filter((w) => w.flags.news && w.status === "Done" && daysSince(w.completed) <= 40).map((w) => ({ id: "w" + w.id, conf: w.confidentiality, text: w.outcome || w.description || w.title, title: w.title })),
   ];
-  const safe = candidates.filter((c) => c.conf === "General internal");
-  const heldBack = candidates.filter((c) => c.conf !== "General internal");
+  const safe = candidates.filter((c) => SHAREABLE.includes(c.conf));
+  const heldBack = candidates.filter((c) => !SHAREABLE.includes(c.conf));
   const [art, setArt] = useState("");
   const generate = () => {
     const appr = safe.filter((c) => draft.approved.includes(c.id));
@@ -2450,7 +2511,7 @@ function Newsletter({ data, mutate }) {
         <input className="input" style={{ width: 180 }} value={draft.edition} onChange={(e) => upd((x) => { x.edition = e.target.value; })} />
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={generate} disabled={!draft.approved.length && !draft.articles.length}>Generate & copy draft</button>
       </div>
-      <p className="sub">Monthly, first week. Only items marked "General internal" are ever suggested. Everything requires your explicit approval before it appears in a draft.</p>
+      <p className="sub">Monthly, first week. Only items marked Internal or Open are ever suggested. Everything requires your explicit approval before it appears in a draft.</p>
       {heldBack.length > 0 && <div className="notebox">{heldBack.length} flagged item(s) withheld due to confidentiality markings ({[...new Set(heldBack.map((c) => c.conf))].join(", ")}). They will not be suggested.</div>}
       <div className="h2">Suggested items ({safe.length})</div>
       {safe.length === 0 && <div className="empty">Nothing flagged for the newsletter yet. Tick the "Newsletter" flag on wins and updates as you record them.</div>}
@@ -2574,7 +2635,7 @@ function CountryView({ data, openItem, setNav, setProjDetail }) {
         <Stat n={mobs.length} l="Mobilisations" />
       </div>
       {projs.length > 0 && <><div className="h2">Projects — {c}</div>
-        {projs.map((p) => <div key={p.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => { setProjDetail(p.id); setNav("projects"); }}><Rag v={p.rag} /><span style={{ flex: 1 }}>{p.name}</span><span className="chip">{p.stage}</span><span className="mono">{p.progress}%</span></div>)}</>}
+        {projs.map((p) => <div key={p.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => { setProjDetail(p.id); setNav("projects"); }}><Rag v={p.rag} /><span style={{ flex: 1 }}>{p.name}</span><span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}<span className="mono">{p.progress}%</span></div>)}</>}
       <div className="h2">Open items — {c}</div>
       <ItemsTable data={data} rows={items} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
     </div>
@@ -3070,7 +3131,7 @@ function Assistant({ data, mutate, auth, onClose }) {
           workstream: a.workstream || "", country: COUNTRIES.includes(a.country) ? a.country : d.settings.defaultCountry,
           client: "", due: a.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
           rag: "", nextAction: a.nextAction || "", blocker: "", horizon: HORIZONS.includes(a.horizon) ? a.horizon : "Next", rank: 50,
-          flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "General internal",
+          flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal",
           notes: [{ ts: todayISO(), text: "Created by the assistant on the user's instruction" }], extra: {}, outcome: "",
         });
         created = a.title;
@@ -3404,10 +3465,26 @@ export default function App({ auth }) {
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
-      // Move projects off the retired stage names onto the shorter list.
+      // Move existing records off the retired list values onto the shorter
+      // lists. Every mapping keeps work where it was: nothing live becomes
+      // closed, and nothing restricted becomes shareable.
+      const remap = (obj, key, map) => {
+        if (obj && map[obj[key]]) { obj[key] = map[obj[key]]; return true; }
+        return false;
+      };
       d.projects.forEach((p) => {
-        if (LEGACY_STAGES[p.stage]) { p.stage = LEGACY_STAGES[p.stage]; dirty = true; }
+        if (remap(p, "stage", LEGACY_STAGES)) dirty = true;
+        if (remap(p, "workstream", LEGACY_WORKSTREAMS)) dirty = true;
       });
+      d.mobs.forEach((m) => { if (remap(m, "stage", LEGACY_MOB_STAGES)) dirty = true; });
+      d.workItems.forEach((w) => {
+        if (remap(w, "status", LEGACY_STATUS)) dirty = true;
+        if (remap(w, "workstream", LEGACY_WORKSTREAMS)) dirty = true;
+        if (remap(w, "confidentiality", LEGACY_CONF)) dirty = true;
+        if (w.priority === "Parked") { w.priority = "Low"; w.horizon = "Parked"; dirty = true; }
+        if (w.extra && remap(w.extra, "decisionStatus", LEGACY_DECISION)) dirty = true;
+      });
+      (d.updates || []).forEach((u) => { if (remap(u, "confidentiality", LEGACY_CONF)) dirty = true; });
       // Repair records that arrived without the shapes the renderers
       // dereference directly (imports, AI output, older backups): flags
       // objects, notes arrays, extra objects.
