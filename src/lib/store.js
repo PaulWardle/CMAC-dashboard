@@ -20,9 +20,21 @@ const DIRTY_KEY = "cmac-occ-v1-dirty";   // "1" when the mirror holds edits the 
 const TABLE = "shared_workspace";
 const ROW_ID = "main";
 
+/* No network call may hang the app. A paused or unreachable project would
+   otherwise leave load() pending forever and the UI stuck on its loading
+   screen with nothing to report; a rejection at least surfaces honestly as
+   "couldn't reach the cloud copy". */
+const NET_TIMEOUT = 15000;
+function withTimeout(promise, ms = NET_TIMEOUT, label = "Supabase") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(label + " did not respond")), ms)),
+  ]);
+}
+
 async function hasSession() {
   if (!supabase) return false;
-  const { data } = await supabase.auth.getUser();
+  const { data } = await withTimeout(supabase.auth.getUser());
   return !!data?.user;
 }
 
@@ -62,16 +74,16 @@ function isDirty() {
    a conflict instead. Handles two devices racing the first insert: the loser
    re-reads and adopts the winner's document. */
 async function saveUnguarded(payload) {
-  const { data: cur } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
+  const { data: cur } = await withTimeout(supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle());
   if (!cur) {
-    const { error } = await supabase.from(TABLE).insert({ id: ROW_ID, ...payload });
+    const { error } = await withTimeout(supabase.from(TABLE).insert({ id: ROW_ID, ...payload }));
     if (!error) return { cloudOk: true, remote: null };
     // Insert race: someone else created the row first — adopt theirs.
-    const { data: cur2 } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
+    const { data: cur2 } = await withTimeout(supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle());
     return cur2 && cur2.data ? { cloudOk: false, remote: cur2.data } : { cloudOk: false, remote: null };
   }
   if (!cur.data || cur.data.rev == null) {
-    const { error } = await supabase.from(TABLE).update(payload).eq("id", ROW_ID);
+    const { error } = await withTimeout(supabase.from(TABLE).update(payload).eq("id", ROW_ID));
     return { cloudOk: !error, remote: null };
   }
   return { cloudOk: false, remote: cur.data };
@@ -92,13 +104,21 @@ export const store = {
    *  or a stale copy can never hijack the shared workspace.
    */
   async load() {
-    if (supabase && (await hasSession())) {
-      const cloudMirror = readScope() === "cloud" ? readLocal() : null;
-      const { data, error } = await supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle();
-      if (error) return { ok: false, doc: cloudMirror, cloudRev: null };
-      const cloud = data ? data.data : null;
-      const doc = cloudMirror && isDirty() && (cloudMirror.rev || 0) > ((cloud && cloud.rev) || 0) ? cloudMirror : cloud;
-      return { ok: true, doc, cloudRev: cloud ? cloud.rev || 0 : null };
+    try {
+      if (supabase && (await hasSession())) {
+        const cloudMirror = readScope() === "cloud" ? readLocal() : null;
+        const { data, error } = await withTimeout(
+          supabase.from(TABLE).select("data").eq("id", ROW_ID).maybeSingle()
+        );
+        if (error) return { ok: false, doc: cloudMirror, cloudRev: null };
+        const cloud = data ? data.data : null;
+        const doc = cloudMirror && isDirty() && (cloudMirror.rev || 0) > ((cloud && cloud.rev) || 0) ? cloudMirror : cloud;
+        return { ok: true, doc, cloudRev: cloud ? cloud.rev || 0 : null };
+      }
+    } catch {
+      // Unreachable cloud: fall back to this device's copy and say so, rather
+      // than leaving the caller waiting on a promise that never settles.
+      return { ok: false, doc: readScope() === "cloud" ? readLocal() : null, cloudRev: null };
     }
     return { ok: true, doc: readScope() === "cloud" ? null : readLocal(), cloudRev: null };
   },
@@ -112,28 +132,37 @@ export const store = {
    */
   async save(data, expectedRev) {
     if (supabase) {
-      if (!(await hasSession())) return { ok: false, cloudOk: false, conflict: false, signedOut: true };
-      // Mirror first — a tab closing during the network call loses nothing.
-      const localOk = writeLocal(data, "cloud");
-      setDirty(true);
-      const payload = { data, updated_at: new Date().toISOString() };
-      let cloudOk = false;
-      let remote = null;
-      if (expectedRev != null) {
-        const { data: rows, error } = await supabase.from(TABLE).update(payload)
-          .eq("id", ROW_ID).eq("data->>rev", String(expectedRev)).select("id");
-        if (!error && rows && rows.length) cloudOk = true;
-        else if (!error) ({ cloudOk, remote } = await saveUnguarded(payload));
-      } else {
-        ({ cloudOk, remote } = await saveUnguarded(payload));
+      let localOk = false;
+      try {
+        if (!(await hasSession())) return { ok: false, cloudOk: false, conflict: false, signedOut: true };
+        // Mirror first — a tab closing during the network call loses nothing.
+        localOk = writeLocal(data, "cloud");
+        setDirty(true);
+        const payload = { data, updated_at: new Date().toISOString() };
+        let cloudOk = false;
+        let remote = null;
+        if (expectedRev != null) {
+          const { data: rows, error } = await withTimeout(
+            supabase.from(TABLE).update(payload).eq("id", ROW_ID).eq("data->>rev", String(expectedRev)).select("id")
+          );
+          if (!error && rows && rows.length) cloudOk = true;
+          else if (!error) ({ cloudOk, remote } = await saveUnguarded(payload));
+        } else {
+          ({ cloudOk, remote } = await saveUnguarded(payload));
+        }
+        if (remote) {
+          writeLocal(remote, "cloud"); // the winning version is now this device's baseline
+          setDirty(false);
+          return { ok: false, cloudOk: false, conflict: true, remote };
+        }
+        if (cloudOk) setDirty(false);
+        return { ok: cloudOk || localOk, cloudOk, conflict: false };
+      } catch {
+        // Cloud unreachable. The mirror (written above, still flagged dirty)
+        // holds the work; report the cloud write as failed so the caller
+        // says so honestly and retries rather than throwing into a void.
+        return { ok: localOk, cloudOk: false, conflict: false };
       }
-      if (remote) {
-        writeLocal(remote, "cloud"); // the winning version is now this device's baseline
-        setDirty(false);
-        return { ok: false, cloudOk: false, conflict: true, remote };
-      }
-      if (cloudOk) setDirty(false);
-      return { ok: cloudOk || localOk, cloudOk, conflict: false };
     }
     const localOk = writeLocal(data, "local");
     return { ok: localOk, cloudOk: localOk, conflict: false };

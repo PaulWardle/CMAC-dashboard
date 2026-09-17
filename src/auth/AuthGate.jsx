@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { isConfigured, getSession, onAuthChange, signInWithPassword, signUpWithPassword, fetchProfile, signOut } from "../lib/auth";
 import { ALLOWED_EMAIL_DOMAIN, isAllowedEmail } from "../lib/config";
 import App from "../App";
@@ -47,12 +47,14 @@ function Shell({ children }) {
 function Logo({ height = 44 }) {
   return <img src="/cmac-logo-white.png" alt="cmac." style={{ height, width: "auto", display: "block" }} />;
 }
+/* The splash is a mark and one line, so it centres on the page rather than
+   sitting left-aligned in the 400px column the sign-in form needs. */
 function Splash({ text }) {
   return (
-    <Shell>
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, padding: 24, fontFamily: "'Montserrat','Segoe UI',system-ui,sans-serif" }}>
       <Logo />
-      <div style={{ marginTop: 26, fontSize: 13, color: MUT, fontWeight: 600 }}>{text}</div>
-    </Shell>
+      <div style={{ marginTop: 26, fontSize: 13, color: MUT, fontWeight: 600, textAlign: "center" }}>{text}</div>
+    </div>
   );
 }
 
@@ -153,6 +155,27 @@ function Login({ onSignedIn }) {
   );
 }
 
+/* Shown when the sign-in service can't be reached at all. Without this the
+   app sat on the splash indefinitely, because a paused or unreachable
+   Supabase project leaves the session check hanging with nothing to report. */
+function OfflineScreen({ msg, onRetry }) {
+  return (
+    <Shell>
+      <Logo />
+      <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, letterSpacing: "-.5px", margin: "34px 0 10px" }}>
+        Can't reach the server<span style={{ color: RED }}>.</span>
+      </h1>
+      <div style={{ background: "#1B3050", borderLeft: "4px solid " + RED, borderRadius: 10, padding: "16px 18px", color: "#C9D1DD", fontSize: 14, lineHeight: 1.6, fontWeight: 500 }}>
+        The command centre couldn't start because the sign-in service didn't respond
+        {msg ? <> (<span style={{ color: "#fff" }}>{msg}</span>)</> : null}.
+        <br /><br />
+        This is usually the database having gone to sleep after a quiet spell, or a connection drop. Waking it up takes a minute or two — try again shortly.
+      </div>
+      <button style={btnStyle} onClick={onRetry}>Try again</button>
+    </Shell>
+  );
+}
+
 function ProfileErrorScreen({ msg, onRetry, onSignOut }) {
   return (
     <Shell>
@@ -195,6 +218,7 @@ export default function AuthGate() {
   const [state, setState] = useState({ loading: true, session: null });
   const [profile, setProfile] = useState(null);
   const [profErr, setProfErr] = useState(null);
+  const [connErr, setConnErr] = useState(null);
 
   const loadProfile = async () => {
     setProfErr(null);
@@ -209,17 +233,32 @@ export default function AuthGate() {
     }
   };
 
+  // Never wait forever on the session check. A paused project leaves the
+  // token refresh hanging, and an unbounded wait shows an eternal splash with
+  // nothing to act on; 12s then an explanation and a retry.
+  const checkSession = useCallback(async (signal) => {
+    setConnErr(null);
+    setState({ loading: true, session: null });
+    try {
+      const s = await Promise.race([
+        getSession(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timed out after 12 seconds")), 12000)),
+      ]);
+      if (!signal?.cancelled) setState({ loading: false, session: s });
+    } catch (e) {
+      if (!signal?.cancelled) { setConnErr(e?.message || "no response"); setState({ loading: false, session: null }); }
+    }
+  }, []);
+
   useEffect(() => {
-    let mounted = true;
-    getSession().then((s) => {
-      if (mounted) setState({ loading: false, session: s });
-    });
-    const off = onAuthChange((s) => setState({ loading: false, session: s }));
+    const signal = { cancelled: false };
+    checkSession(signal);
+    const off = onAuthChange((s) => { setConnErr(null); setState({ loading: false, session: s }); });
     return () => {
-      mounted = false;
+      signal.cancelled = true;
       off();
     };
-  }, []);
+  }, [checkSession]);
 
   useEffect(() => {
     setProfile(null);
@@ -228,6 +267,7 @@ export default function AuthGate() {
   }, [state.session?.user?.id]);
 
   if (state.loading) return <Splash text="Starting your command centre…" />;
+  if (connErr) return <OfflineScreen msg={connErr} onRetry={() => checkSession()} />;
   if (isConfigured && !state.session) return <Login onSignedIn={() => {}} />;
 
   const mode = state.session?.mode || (isConfigured ? "cloud" : "local");
