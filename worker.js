@@ -7,6 +7,11 @@
  * browser. Model is chosen here; override with the AI_MODEL variable.
  */
 
+/* Models the client may ask for, and the one used when it asks for nothing.
+   Kept in step with src/lib/ai.js, which prices the same list. */
+const ALLOWED_MODELS = new Set(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
+const DEFAULT_MODEL = "claude-sonnet-5";
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -72,12 +77,28 @@ async function handleAI(request, env) {
     return json({ error: "AI is not configured on the server (missing ANTHROPIC_API_KEY)." }, 503);
   }
 
-  const model = env.AI_MODEL || "claude-opus-4-8";
+  // The client picks a model per job (cheap one for a tidy-up, the best one
+  // for a board-sensitive check), but only from this list — an open `model`
+  // field would let anything that reached the endpoint spend at whatever rate
+  // it liked. AI_MODEL, when set, overrides the choice entirely.
+  const model = env.AI_MODEL || (ALLOWED_MODELS.has(body?.model) ? body.model : DEFAULT_MODEL);
 
   // Forward only known-safe fields. `system` and `tools` power the in-app
   // assistant; `stream` turns on live token streaming (SSE passthrough).
   const payload = { model, max_tokens: maxTokens, messages };
-  if (body.system) payload.system = String(body.system).slice(0, 60000);
+  // `system` may be a plain string or an array of text blocks — the array form
+  // is how the client marks the workspace brief as cacheable, which is what
+  // keeps a multi-step assistant reply from re-billing it on every round.
+  if (Array.isArray(body.system)) {
+    payload.system = body.system.slice(0, 4).map((b) => {
+      const out = { type: "text", text: String(b?.text || "").slice(0, 60000) };
+      if (b?.cache_control?.type === "ephemeral") out.cache_control = { type: "ephemeral" };
+      return out;
+    }).filter((b) => b.text);
+    if (!payload.system.length) delete payload.system;
+  } else if (body.system) {
+    payload.system = String(body.system).slice(0, 60000);
+  }
   if (Array.isArray(body.tools) && body.tools.length) payload.tools = body.tools.slice(0, 8);
   if (body.tool_choice) payload.tool_choice = body.tool_choice;
   if (body.stream) payload.stream = true;

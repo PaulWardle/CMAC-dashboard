@@ -33,9 +33,19 @@ function devAiProxy(env) {
             const apiKey = process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY;
             if (!apiKey) return send(503, { error: "ANTHROPIC_API_KEY is not set in your local environment (.env)." });
             if (!Array.isArray(messages) || !messages.length) return send(400, { error: "messages are required" });
-            const model = process.env.AI_MODEL || env.AI_MODEL || "claude-opus-4-8";
+            // Mirror worker.js: allowlisted client model choice, and pass the
+            // system through as blocks so prompt caching behaves the same here.
+            const ALLOWED = new Set(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
+            const model = process.env.AI_MODEL || env.AI_MODEL || (ALLOWED.has(parsed.model) ? parsed.model : "claude-sonnet-5");
             const payload = { model, max_tokens: maxTokens, messages };
-            if (parsed.system) payload.system = String(parsed.system).slice(0, 60000);
+            if (Array.isArray(parsed.system)) {
+              payload.system = parsed.system.slice(0, 4).map((b) => {
+                const out = { type: "text", text: String((b && b.text) || "").slice(0, 60000) };
+                if (b && b.cache_control && b.cache_control.type === "ephemeral") out.cache_control = { type: "ephemeral" };
+                return out;
+              }).filter((b) => b.text);
+              if (!payload.system.length) delete payload.system;
+            } else if (parsed.system) payload.system = String(parsed.system).slice(0, 60000);
             if (Array.isArray(parsed.tools) && parsed.tools.length) payload.tools = parsed.tools.slice(0, 8);
             if (parsed.tool_choice) payload.tool_choice = parsed.tool_choice;
             if (parsed.stream) payload.stream = true;

@@ -4,6 +4,7 @@ import { store } from "./lib/store";
 import { supabase } from "./lib/supabase";
 import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
 import { MONTHS, ytd, ytdTarget, lastIdx, ragFor, ragYtd, fmtVal } from "./lib/bsc";
+import { QUALITY, DEFAULT_QUALITY, MODELS, modelFor, recordUsage, readMeter, meterTotals, resetMeter, costOf, fmtUsd } from "./lib/ai";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -42,6 +43,8 @@ const DEFAULT_SETTINGS = {
   defaultCountry: "Group",
   staleItem: 14, staleProject: 21, staleMob: 7,
   density: "compact",
+  aiQuality: DEFAULT_QUALITY,
+  aiBudget: 20, // soft monthly spend warning, in US dollars
 };
 
 /* ---------- date & misc utilities (UK formats) ---------- */
@@ -130,12 +133,23 @@ async function aiHeaders() {
   return h;
 }
 
-async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
+/* Which models this workspace is set to use. The AI helpers are module-level
+   while the setting lives in the document, so App keeps this in step. */
+let _aiQuality = DEFAULT_QUALITY;
+function setAiQuality(q) { _aiQuality = QUALITY[q] ? q : DEFAULT_QUALITY; }
+
+/**
+ * One-shot (non-streaming) request. `job` sizes the work so the right model
+ * answers it: "light" for mechanical rewriting, "standard" for questions and
+ * triage, "deep" for judgement calls that reach the board.
+ */
+async function askClaude(prompt, expectJson = false, maxTokens = 1000, job = "standard") {
+  const model = modelFor(_aiQuality, job);
   const call = async (mt) => {
     const res = await fetch("/api/ai", {
       method: "POST",
       headers: await aiHeaders(),
-      body: JSON.stringify({ max_tokens: mt, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model, max_tokens: mt, messages: [{ role: "user", content: prompt }] }),
     });
     if (!res.ok) {
       let detail = "";
@@ -144,6 +158,7 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
     }
     const d = await res.json();
     if (d.error) throw new Error(typeof d.error === "string" ? d.error : (d.error.message || "AI error"));
+    recordUsage(d.model || model, d.usage);
     return d;
   };
   let d = await call(maxTokens);
@@ -160,11 +175,16 @@ async function askClaude(prompt, expectJson = false, maxTokens = 1000) {
  * onDelta(textSoFar) as tokens arrive. Returns the final assistant content
  * blocks (text + tool_use) and the stop reason.
  */
-async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta }) {
+async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta, job = "standard" }) {
+  const model = modelFor(_aiQuality, job);
+  // Mark the workspace brief as cacheable. It is the largest and most-repeated
+  // part of every assistant request, so caching it turns a multi-round reply
+  // from "re-bill the whole brief each round" into one write and cheap reads.
+  const sys = system ? [{ type: "text", text: String(system), cache_control: { type: "ephemeral" } }] : undefined;
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: await aiHeaders(),
-    body: JSON.stringify({ stream: true, system, messages, tools, max_tokens: maxTokens }),
+    body: JSON.stringify({ stream: true, model, system: sys, messages, tools, max_tokens: maxTokens }),
   });
   if (!res.ok || !res.body) {
     let detail = "";
@@ -176,6 +196,7 @@ async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta
   let buf = "";
   const content = [];
   const jsonAcc = {};
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
   let stop = null;
   const textSoFar = () => content.filter((c) => c && c.type === "text").map((c) => c.text).join("");
   for (;;) {
@@ -203,13 +224,19 @@ async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta
         if (c && c.type === "tool_use" && jsonAcc[ev.index]) {
           try { c.input = JSON.parse(jsonAcc[ev.index]); } catch (e) { c.input = c.input || {}; }
         }
+      } else if (ev.type === "message_start") {
+        // Input and cache counts arrive here; output totals arrive at the end.
+        const u = ev.message?.usage;
+        if (u) { usage.input_tokens = u.input_tokens || 0; usage.cache_creation_input_tokens = u.cache_creation_input_tokens || 0; usage.cache_read_input_tokens = u.cache_read_input_tokens || 0; }
       } else if (ev.type === "message_delta") {
         stop = ev.delta?.stop_reason || stop;
+        if (ev.usage?.output_tokens != null) usage.output_tokens = ev.usage.output_tokens;
       } else if (ev.type === "error") {
         throw new Error(ev.error?.message || "AI stream error");
       }
     }
   }
+  recordUsage(model, usage);
   return { content: content.filter(Boolean), stop_reason: stop };
 }
 
@@ -2201,7 +2228,7 @@ function ReportWorkspace({ data, mutate }) {
     try {
       const out = await askClaude(
         `Rewrite these rough prep scribbles as crisp briefing lines for an executive update. Keep every fact, name and number; do not invent or embellish anything; UK spelling; concise and direct. Return ONLY the briefing lines, one per line starting with "- ".\n\nSECTION: ${label}\nSCRIBBLES:\n${notes}`,
-        false, 900);
+        false, 900, "light");
       if (out && typeof out === "string") upd((x) => { x.commentary[k] = out.trim(); });
     } catch (e) { askInfo("Could not tidy just now (" + (e.message || "AI error") + ")."); }
     setTidying("");
@@ -2242,7 +2269,7 @@ function ReportWorkspace({ data, mutate }) {
     try {
       const out = await askClaude(
         `You are checking a BOARD pack draft for content that should not reach a company board because it concerns specific, identifiable individuals: staff performance or conduct concerns, disciplinary matters, PIPs, health, salary, personal circumstances, or anything a named employee would not expect a board to read about them. A name appearing merely as the owner of an action or project is acceptable. Respond ONLY with JSON: {"flags": [{"quote": "the exact offending line or phrase", "reason": "short reason"}]} — an empty array if nothing is concerning.\n\nBOARD PACK DRAFT:\n${md.slice(0, 24000)}`,
-        true, 1200);
+        true, 1200, "deep");
       const flags = (out && out.flags) || [];
       if (!flags.length) return true;
       const list = flags.slice(0, 6).map((f) => `• "${String(f.quote || "").slice(0, 140)}" — ${f.reason || ""}`).join("\n");
@@ -2673,6 +2700,77 @@ function ContextPanel({ data, mutate }) {
   );
 }
 
+/* AI quality & spend. Every AI request is metered on this device so the
+   running cost is visible here rather than only on the Anthropic bill. */
+function AiCostPanel({ data, mutate }) {
+  const s = data.settings;
+  const [meter, setMeter] = useState(() => readMeter());
+  // Re-read on focus: usage accrues while other screens are in use.
+  useEffect(() => {
+    const on = () => setMeter(readMeter());
+    window.addEventListener("focus", on);
+    const t = setInterval(on, 15000);
+    return () => { window.removeEventListener("focus", on); clearInterval(t); };
+  }, []);
+  const totals = meterTotals(meter);
+  const budget = Number(s.aiBudget) || 0;
+  const over = budget > 0 && totals.cost >= budget;
+  const near = budget > 0 && !over && totals.cost >= budget * 0.8;
+  const rows = Object.entries(meter.models || {}).sort((a, b) => costOf(b[0], b[1]) - costOf(a[0], a[1]));
+  const q = s.aiQuality || DEFAULT_QUALITY;
+  return (
+    <>
+      <div className="h2">AI quality & spend</div>
+      <div className="card">
+        <div className="sub" style={{ marginTop: 0 }}>
+          The assistant, capture triage and the report tools all call Claude. Cheaper models handle everyday work well; the most capable one is kept for judgement calls like the board person-check. Change this any time — it takes effect on the next request.
+        </div>
+        <label className="flab">Quality setting</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+          {Object.entries(QUALITY).map(([k, v]) => (
+            <button key={k} className={"btn sm" + (q === k ? " pri" : "")} onClick={() => mutate((d) => { d.settings.aiQuality = k; return d; }, "AI quality set to " + v.label)}>{v.label}</button>
+          ))}
+        </div>
+        <div className="sub" style={{ marginTop: 0 }}>{(QUALITY[q] || QUALITY[DEFAULT_QUALITY]).blurb}</div>
+        <div className="sub" style={{ marginTop: 2 }}>
+          Chat &amp; questions: <b>{MODELS[modelFor(q, "standard")]?.label || modelFor(q, "standard")}</b> · Board-sensitive checks: <b>{MODELS[modelFor(q, "deep")]?.label || modelFor(q, "deep")}</b>
+        </div>
+
+        <div className="h2" style={{ marginTop: 16 }}>This month on this device</div>
+        {!totals.calls && <div className="sub" style={{ marginTop: 0 }}>No AI requests yet this month.</div>}
+        {!!totals.calls && (
+          <>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "baseline", margin: "4px 0 8px" }}>
+              <div><div style={{ fontSize: 26, fontWeight: 800 }}>{fmtUsd(totals.cost)}</div><div className="sub" style={{ marginTop: 0 }}>estimated spend</div></div>
+              <div><div style={{ fontSize: 18, fontWeight: 700 }}>{totals.calls}</div><div className="sub" style={{ marginTop: 0 }}>requests</div></div>
+              <div><div style={{ fontSize: 18, fontWeight: 700 }}>{(totals.tokens / 1000).toFixed(0)}k</div><div className="sub" style={{ marginTop: 0 }}>tokens</div></div>
+              {totals.saved > 0 && <div><div style={{ fontSize: 18, fontWeight: 700, color: "#1A7F44" }}>{fmtUsd(totals.saved)}</div><div className="sub" style={{ marginTop: 0 }}>saved by caching</div></div>}
+            </div>
+            <table className="tbl"><thead><tr><th>Model</th><th>Requests</th><th>In / out tokens</th><th>Cost</th></tr></thead>
+              <tbody>{rows.map(([model, e]) => (
+                <tr key={model}>
+                  <td>{MODELS[model]?.label || model}</td>
+                  <td className="mono">{e.calls}</td>
+                  <td className="mono">{(((e.in || 0) + (e.cacheWrite || 0) + (e.cacheRead || 0)) / 1000).toFixed(1)}k / {((e.out || 0) / 1000).toFixed(1)}k</td>
+                  <td className="mono">{fmtUsd(costOf(model, e))}</td>
+                </tr>))}</tbody></table>
+          </>
+        )}
+        {over && <div className="warnbox" style={{ marginTop: 10 }}>You've passed your {fmtUsd(budget)} monthly guide. Switch to Economy above, or raise the figure if the spend is worth it.</div>}
+        {near && <div className="warnbox" style={{ marginTop: 10 }}>You're at {Math.round((totals.cost / budget) * 100)}% of your {fmtUsd(budget)} monthly guide.</div>}
+        <div className="frow" style={{ marginTop: 10 }}>
+          <F label="Monthly spend guide (US$)"><input className="input" type="number" min="0" step="5" value={s.aiBudget ?? 20}
+            onChange={(e) => mutate((d) => { d.settings.aiBudget = Number(e.target.value) || 0; return d; }, null)} /></F>
+        </div>
+        <div className="sub" style={{ marginTop: 0 }}>
+          Counted on this device only, and an estimate — Anthropic's console is the billing record. Attachments and long conversations cost more; the assistant clears its history when you leave the screen.
+        </div>
+        <button className="btn sm" style={{ marginTop: 8 }} onClick={async () => { if (await askConfirm("Reset this device's usage counter to zero? It doesn't change anything you've already been billed.")) { resetMeter(); setMeter(readMeter()); } }}>Reset counter</button>
+      </div>
+    </>
+  );
+}
+
 /* Self-service password change for any signed-in account. */
 function ChangePassword() {
   const [pw, setPw] = useState("");
@@ -2738,6 +2836,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
       <h2 className="h1">Settings & Data</h2>
       {auth?.isAdmin && auth?.mode === "cloud" && supabase && <TeamPanel onTeamChange={onTeamChange} auth={auth} />}
       {(!auth || auth.canEdit) && <ContextPanel data={data} mutate={mutate} />}
+      {(!auth || auth.canEdit) && <AiCostPanel data={data} mutate={mutate} />}
       {auth?.mode === "cloud" && supabase && <ChangePassword />}
       <div className="h2">Profile</div>
       <div className="card"><div className="frow">
@@ -2873,7 +2972,24 @@ function Assistant({ data, mutate, auth, onClose }) {
      attachments from all but the newest attachment-bearing message into short
      placeholders — Claude has already read them, so re-sending the bytes with
      every following turn would only burn credits. */
-  const toApiHistory = (history) => {
+  /* Every request re-sends the whole conversation, so an afternoon's chat gets
+     expensive turn by turn. Keep a recent window, cut only at a real user
+     message (never between a tool call and its result, which the API rejects),
+     and collapse attachments that have already been read. */
+  const MAX_HISTORY = 24;
+  const trimHistory = (history) => {
+    if (history.length <= MAX_HISTORY) return history;
+    let start = history.length - MAX_HISTORY;
+    while (start < history.length) {
+      const m = history[start];
+      const isToolResult = m.role === "user" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result");
+      if (m.role === "user" && !isToolResult) break;
+      start++;
+    }
+    return start < history.length ? history.slice(start) : history;
+  };
+  const toApiHistory = (full) => {
+    const history = trimHistory(full);
     let lastAtt = -1;
     history.forEach((m, idx) => {
       if (m.role === "user" && Array.isArray(m.content) && m.content.some((b) => b.type === "image" || b.type === "document")) lastAtt = idx;
@@ -2987,8 +3103,13 @@ ${serialiseForAI(data)}`;
   const runRounds = async (history) => {
     let rounds = 0;
     let needsClose = true; // still true after the loop = the round cap tripped
+    // Snapshot the brief ONCE for this reply. Rebuilding it each round would
+    // change it the moment a tool edited the workspace, and a changed prefix
+    // means no cache hit — the expensive part would be re-billed every round.
+    // The tool results in the history already say what changed.
+    const sys = systemPrompt();
     while (rounds++ < 6) {
-      const r = await streamClaude({ system: systemPrompt(), messages: toApiHistory(history), tools: canEdit ? TOOLS : undefined, onDelta: setLive });
+      const r = await streamClaude({ system: sys, messages: toApiHistory(history), tools: canEdit ? TOOLS : undefined, onDelta: setLive });
       const asst = { role: "assistant", content: r.content };
       history = [...history, asst];
       setMsgs(history); setLive("");
@@ -3013,7 +3134,7 @@ ${serialiseForAI(data)}`;
     // The model never saw the final tool results and the user has no closing
     // reply — one last call with tools off forces a plain-text wrap-up.
     if (needsClose) {
-      const r = await streamClaude({ system: systemPrompt(), messages: toApiHistory(history), onDelta: setLive });
+      const r = await streamClaude({ system: sys, messages: toApiHistory(history), onDelta: setLive });
       history = [...history, { role: "assistant", content: r.content }];
       setMsgs(history); setLive("");
     }
@@ -3249,6 +3370,8 @@ export default function App({ auth }) {
   const saveTimer = useRef(null);
   const dataRef = useRef(null);
   dataRef.current = data;
+  // Keep the module-level AI helpers on the workspace's chosen quality setting.
+  setAiQuality(data?.settings?.aiQuality);
 
   useEffect(() => {
     (async () => {

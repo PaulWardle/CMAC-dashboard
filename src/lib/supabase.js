@@ -19,7 +19,12 @@ import { createClient } from "@supabase/supabase-js";
 const url = import.meta.env.VITE_SUPABASE_URL || "https://lvbqsiycvsvadkowjequ.supabase.co";
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_-UZzABw_r3oyN8DGTOqiaw_FQU-SYNW";
 
-export const isConfigured = Boolean(url && anonKey);
+// VITE_LOCAL_MODE=1 forces local mode regardless of the baked-in values: no
+// sign-in, localStorage only. Used by the test suite (see tests/README.md) so
+// it never has to edit this file, and handy for offline development.
+const forceLocal = import.meta.env.VITE_LOCAL_MODE === "1";
+
+export const isConfigured = Boolean(url && anonKey) && !forceLocal;
 
 export const supabase = isConfigured
   ? createClient(url, anonKey, {
