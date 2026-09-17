@@ -30,7 +30,21 @@ const PRIORITIES = ["Critical","High","Medium","Low","Parked"];
 const RAGS = ["Red","Amber","Green"];
 const COUNTRIES = ["UK","Spain","Portugal","Greece","Group"];
 const WORKSTREAMS = ["KPI, board & COO reporting","Minicabit performance","AI supplier call handling","Supplier transitions","Australia mobilisation","Hotel commission recovery","European T&Q standardisation","Planning team resilience","Ops Portal & digitalisation","Client mobilisations","Country operating reviews","Resource planning & org design","Service performance","Automation & AI","Operational controls","People & capability","Client delivery","Aviation","Rail","Supply","Technology","Business Change"];
-const PROJECT_STAGES = ["Idea","Discovery","Definition","Planning","Delivery","Implementation","Hypercare","BAU Handover","Closed","On Hold","Cancelled"];
+/* Seven stages, not eleven. Discovery and Definition were both "working out
+   what this is"; Delivery and Implementation were the same thing twice; and
+   Hypercare and BAU Handover belong to a mobilisation's lifecycle, not a
+   project's — they already exist in MOB_STAGES below. */
+const PROJECT_STAGES = ["Idea","Scoping","Planning","Delivery","Closed","On Hold","Cancelled"];
+/* Projects saved under the old list keep their place on the board rather than
+   losing their stage. Nothing live is mapped to a closed state — a stage that
+   meant "still running" still means that. */
+const LEGACY_STAGES = {
+  "Discovery": "Scoping",
+  "Definition": "Scoping",
+  "Implementation": "Delivery",
+  "Hypercare": "Delivery",
+  "BAU Handover": "Delivery",
+};
 const MOB_STAGES = ["Discovery","Handover from Commercial","Design","Build","Readiness","Go-live Approval","Go-live","Hypercare","BAU Handover","Closed","On Hold"];
 const MOB_WORKSTREAMS = ["Scope & assumptions","Governance","Operational design","Booking flows","Customer contact channels","Systems & access","Data & reporting","Supply readiness","Hotel readiness","Transport readiness","Resource planning","Recruitment","Training","Quality assurance","Finance & billing","Communications","Escalation model","Business continuity","Testing","Cutover","Hypercare","BAU handover"];
 const CONFIDENTIALITY = ["General internal","Restricted","Senior leadership","Board confidential","Client confidential","People confidential"];
@@ -1511,7 +1525,9 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
           <F label="Code"><input className="input" value={p.code} onChange={(e) => set("code", e.target.value)} /></F>
           <F label="Owner"><input className="input" value={p.owner} onChange={(e) => set("owner", e.target.value)} /></F>
           <F label="Sponsor"><input className="input" value={p.sponsor} onChange={(e) => set("sponsor", e.target.value)} /></F>
-          <F label="Stage"><select className="select" value={p.stage} onChange={(e) => set("stage", e.target.value)}>{PROJECT_STAGES.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <F label="Stage"><select className="select" value={p.stage} onChange={(e) => set("stage", e.target.value)}>
+            {(PROJECT_STAGES.includes(p.stage) || !p.stage ? PROJECT_STAGES : [p.stage, ...PROJECT_STAGES]).map((s) => <option key={s}>{s}</option>)}
+          </select></F>
           <F label="RAG"><select className="select" value={p.rag} onChange={(e) => set("rag", e.target.value)}>{RAGS.map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Confidence"><select className="select" value={p.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Country"><select className="select" value={p.country} onChange={(e) => set("country", e.target.value)}>{COUNTRIES.map((s) => <option key={s}>{s}</option>)}</select></F>
@@ -3388,6 +3404,10 @@ export default function App({ auth }) {
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
+      // Move projects off the retired stage names onto the shorter list.
+      d.projects.forEach((p) => {
+        if (LEGACY_STAGES[p.stage]) { p.stage = LEGACY_STAGES[p.stage]; dirty = true; }
+      });
       // Repair records that arrived without the shapes the renderers
       // dereference directly (imports, AI output, older backups): flags
       // objects, notes arrays, extra objects.
