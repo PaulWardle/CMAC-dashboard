@@ -12,8 +12,21 @@
  * Parsers are dynamically imported so they only download when first used.
  */
 
-export const ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.xls,.csv,.msg,.eml,.txt,.md";
+/* Extensions AND media types: iOS restricts the picker — often to a single
+   file, sometimes greying valid files out — when it only sees extensions. */
+export const ACCEPT = [
+  "image/*", ".png", ".jpg", ".jpeg", ".webp", ".gif",
+  "application/pdf", ".pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", ".xlsx", ".xls",
+  "text/csv", ".csv", "message/rfc822", ".eml", ".msg",
+  "text/plain", ".txt", ".md",
+].join(",");
 export const MAX_FILES = 8;
+/* Anthropic accepts a 32MB request and base64 inflates by about a third, so
+   this leaves room for the rest of the message. */
+export const PDF_MAX = 20 * 1024 * 1024;
+const mb = (n) => (n / 1024 / 1024).toFixed(1) + "MB";
 
 function b64FromBuffer(buf) {
   const bytes = new Uint8Array(buf);
@@ -78,7 +91,9 @@ async function sheetText(file) {
 
 async function msgText(file) {
   const mod = await import("@kenjiuno/msgreader");
-  const MsgReader = mod.default?.default || mod.default || mod.MsgReader;
+  const MsgReader = [mod.default?.default, mod.default, mod.MsgReader, mod]
+    .find((c) => typeof c === "function");
+  if (!MsgReader) throw new Error(file.name + ": this .msg could not be opened. Open it in Outlook and use File > Save As > Text, or forward it to yourself and save as .eml.");
   const reader = new MsgReader(await file.arrayBuffer());
   const d = reader.getFileData() || {};
   const recips = (d.recipients || []).map((r) => r.name || r.email).filter(Boolean).join(", ");
@@ -103,7 +118,7 @@ export async function fileToCapture(file) {
 
   if (isImage) return imageBlock(file);
   if (ext === "pdf") {
-    if (file.size > 4.5 * 1024 * 1024) throw new Error(file.name + ": PDF too large (max ~4.5MB) — try exporting fewer pages");
+    if (file.size > PDF_MAX) throw new Error(file.name + " is " + mb(file.size) + " — the limit is " + mb(PDF_MAX) + ". Export a page range, or print the pages you need to a new PDF.");
     return { kind: "pdf", name: file.name, data: b64FromBuffer(await file.arrayBuffer()) };
   }
   if (ext === "docx") return { kind: "text", name: file.name, text: await docxText(file) };

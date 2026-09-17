@@ -1055,8 +1055,12 @@ function Capture({ data, mutate, openItem }) {
     const incoming = Array.from(fileList || []);
     if (!incoming.length) return;
     setErr(""); setIngesting(true);
+    // Count as we go: `files` is the value captured when this render ran, so
+    // trusting it silently dropped later files in a multi-file selection.
+    let held = files.length;
+    const problems = [];
     for (const f of incoming) {
-      if (files.length + 1 > MAX_FILES) { setErr("Maximum " + MAX_FILES + " attachments per capture."); break; }
+      if (held >= MAX_FILES) { problems.push("Only " + MAX_FILES + " attachments at a time — " + f.name + " was not added."); continue; }
       // A dropped workbook that matches the Balanced Scorecard template can go
       // straight into SLA & KPIs instead of through AI capture.
       if (/\.(xlsx|xlsm)$/i.test(f.name)) {
@@ -1072,9 +1076,12 @@ function Capture({ data, mutate, openItem }) {
       }
       try {
         const processed = await fileToCapture(f);
+        held += 1;
         setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
-      } catch (e) { setErr(String(e.message || e)); }
+      } catch (e) { problems.push(String(e.message || e)); }
     }
+    // Report every file that failed, not just the last one.
+    if (problems.length) setErr(problems.join("  •  "));
     setIngesting(false);
   };
   const onPaste = (e) => {
@@ -3029,15 +3036,17 @@ function Assistant({ data, mutate, auth, onClose }) {
     const incoming = Array.from(fileList || []);
     if (!incoming.length) return;
     setIngesting(true);
+    let held = files.length;
+    const problems = [];
     for (const f of incoming) {
-      if (files.length + 1 > MAX_FILES) break;
+      if (held >= MAX_FILES) { problems.push("Only " + MAX_FILES + " attachments at a time — " + f.name + " was not added."); continue; }
       try {
         const processed = await fileToCapture(f);
+        held += 1;
         setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
-      } catch (e) {
-        setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + String(e.message || e) }] }]);
-      }
+      } catch (e) { problems.push(String(e.message || e)); }
     }
+    if (problems.length) setMsgs((m) => [...m, { role: "assistant", content: [{ type: "text", text: "⚠ " + problems.join("\n⚠ ") }] }]);
     setIngesting(false);
   };
   const onPaste = (e) => {
