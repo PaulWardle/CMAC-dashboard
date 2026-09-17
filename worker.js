@@ -4,7 +4,9 @@
  * Serves the built SPA from the static-assets binding (env.ASSETS) and hosts
  * the server-side AI proxy at POST /api/ai. The Anthropic API key lives only
  * in the Worker environment (env.ANTHROPIC_API_KEY) and never reaches the
- * browser. Model is chosen here; override with the AI_MODEL variable.
+ * browser. The client picks a model per job from an allowlist (see
+ * src/lib/ai.js); setting an AI_MODEL variable pins every request to one
+ * model instead, which disables that per-job routing.
  */
 
 /* Models the client may ask for, and the one used when it asks for nothing.
