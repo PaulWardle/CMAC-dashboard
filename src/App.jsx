@@ -233,7 +233,7 @@ const STYLES = `
 .notebox { background:#F2F6FD; border:1px solid #C9D7EF; border-left:4px solid #1D5FBF; border-radius:10px; padding:9px 13px; font-size:12px; color:#173E7E; margin-bottom:10px; }
 .okbox { background:#F0F8F2; border:1px solid #BFE0C8; border-left:4px solid #1A7F44; border-radius:10px; padding:9px 13px; font-size:12px; color:#0F5C2E; margin-bottom:10px; }
 .empty { padding:24px; text-align:center; color:#5C6675; background:#fff; border:1.5px dashed #C7CFD8; border-radius:12px; font-size:12.5px; }
-.kcol.done { background:#EAF1EB; border-color:#CFE0D3; }
+.kcol.done { background:#EAF1EB; border-color:#CFE0D3; min-width:168px; width:168px; }
 .kempty { font-size:10.5px; color:#78828F; padding:8px 4px; line-height:1.5; }
 .kcard.muted { opacity:.62; cursor:pointer; }
 /* Saved views as tabs — the pattern that works on the Notion board: the
@@ -1022,6 +1022,7 @@ function ItemCard({ data, w, onOpen, onDragStart, mutate }) {
         {badge && <span className={"duechip " + badge.tone}>{badge.text}</span>}
         {sub && <span className="chip">{sub.done}/{sub.total}</span>}
         {isWaiting(w) && w.waitingOn && <span className="chip wait">on {w.waitingOn}</span>}
+        {w.status === "Blocked" && w.blocker && <span className="chip blocked">{w.blocker.slice(0, 26)}</span>}
         {!isWaiting(w) && w.owner && !isMine(data, w) && <span className="chip">@{w.owner}</span>}
         {parent && <span className="chip">{parent.slice(0, 22)}</span>}
         {ctx.slice(0, 2).map((c) => <span key={c} className="chip ctx">{c}</span>)}
@@ -1044,21 +1045,34 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
   if (f.type) rows = rows.filter((w) => w.type === f.type);
   const owners = [...new Set(data.workItems.flatMap((w) => [w.owner, w.waitingOn]).filter(Boolean))].sort();
 
-  /* Dropping onto Waiting changes the mode; dropping anywhere else changes
-     the status and returns the item to being mine. */
+  /* Dropping onto Waiting changes who holds the work; dropping anywhere
+     else changes where it has got to. Blocked keeps the mode, because
+     "blocked AND waiting on Judith" is a real and common state — the card
+     still shows whose it is. */
   const drop = (col) => (e) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("id"); if (!id) return;
     mutate((d) => {
       const w = d.workItems.find((x) => x.id === id);
       if (!w) return d;
-      if (col.key === "Waiting") { w.mode = "Waiting on"; if (w.status === "Inbox") w.status = "Planned"; }
-      else { w.status = col.key; w.mode = "Action"; }
+      if (col.key === "Waiting") {
+        w.mode = "Waiting on";
+        // Explicitly handing it to someone is a statement that it is moving
+        // again, so it stops being blocked.
+        if (w.status === "Blocked" || w.status === "Inbox") w.status = "In Progress";
+      } else if (col.key === "Blocked") {
+        w.status = "Blocked";            // whoever holds it, it is stuck
+      } else {
+        w.status = col.key; w.mode = "Action";
+      }
       w.updatedAt = todayISO();
       return d;
     }, col.key === "Waiting" ? "Moved to Waiting on" : "Status → " + col.key);
   };
-  const columnOf = (w) => (isWaiting(w) ? "Waiting" : w.status);
+  /* Blocked wins the column. It is the exception that needs intervention,
+     and burying it inside Waiting would leave the Blocked count reading
+     zero while something was plainly stuck. */
+  const columnOf = (w) => (w.status === "Blocked" ? "Blocked" : isWaiting(w) ? "Waiting" : w.status);
   const complete = (w) => mutate((d) => {
     const x = d.workItems.find((i) => i.id === w.id);
     if (x) { x.status = "Done"; x.completed = todayISO(); x.archivedAt = todayISO(); x.updatedAt = todayISO(); }
