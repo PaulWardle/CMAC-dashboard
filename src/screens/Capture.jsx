@@ -19,7 +19,7 @@ import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
 import { askClaude } from "../lib/claude";
 import { fileToCapture, ACCEPT, MAX_FILES } from "../lib/ingest";
 import {
-  PRIORITIES, PRIO_LABEL, TYPES, CORE_TYPES, WORKSTREAMS, uid, todayISO, daysSince,
+  PRIORITIES, PRIO_LABEL, TYPES, CORE_TYPES, uid, todayISO, daysSince,
   ctxNames, personByName, isOpen,
 } from "../lib/model";
 
@@ -42,7 +42,7 @@ function capturePrompt(text, d) {
 Respond ONLY with JSON (no markdown, no preamble):
 {
  "read": string — 2-4 sentences: what this material actually is, and the single most important thing in it. Plain prose.
- "actions":    [ {"title","description","due","priority","project","mobilisation","workstream","contexts":[],"confidence":"high"|"low"} ]   — things the DIRECTOR must do
+ "actions":    [ {"title","description","due","priority","project","mobilisation","contexts":[],"confidence":"high"|"low"} ]   — things the DIRECTOR must do
  "waiting":    [ {"title","description","person","due","priority","contexts":[],"confidence"} ]                                             — things SOMEONE ELSE owes, that the director must monitor
  "decisions":  [ {"title","what","who","rationale","status":"Decided"|"Required"} ]
  "risks":      [ {"title","description","priority","mitigation"} ]
@@ -59,14 +59,13 @@ RULES — these matter more than completeness:
 - Do not turn every "we should" into an action. Only what was actually asked for or agreed.
 - Set confidence "low" on anything you are inferring rather than reading. The user sorts those first.
 - Priority: ${PRIORITIES.map((p) => `${p}=${PRIO_LABEL[p]}`).join(", ")}. Default P3 unless urgency is clear.
-- "contexts" must be exact names from this list or omitted: ${JSON.stringify(d.contexts.filter((c) => c.active).map((c) => c.name))}
+- "contexts" is how work is classified — geography, function, client, supplier. Tag as many as genuinely apply. Exact names from this list only: ${JSON.stringify(d.contexts.filter((c) => c.active).map((c) => `${c.name} (${c.type})`))}
 - "project" / "mobilisation" must be an exact existing name or "".
 - Empty arrays are fine. An honest short answer beats a padded one.
 
 Today is ${fmtD(todayISO())} (${todayISO()}). Resolve stated relative dates against it.
 Projects: ${JSON.stringify(d.projects.map((p) => p.name))}
 Mobilisations: ${JSON.stringify(d.mobs.map((m) => m.name))}
-Workstreams: ${JSON.stringify(WORKSTREAMS)}
 Known people: ${JSON.stringify(d.people.map((p) => p.name))}
 The director is ${d.settings.displayName || "the user"}.
 
@@ -202,7 +201,6 @@ export default function Capture({ data, mutate, openItem }) {
         title: a.title || "Untitled", description: a.description || "", type: "Action", mode: "Action",
         due: a.due || "", priority: PRIORITIES.includes(a.priority) ? a.priority : "P3",
         project: idOf(d.projects, a.project), mob: idOf(d.mobs, a.mobilisation),
-        workstream: WORKSTREAMS.includes(a.workstream) ? a.workstream : "",
         contexts: ctxIds(a.contexts), source: src,
         notes: [{ ts: todayISO(), text: `From ${label} (AI-proposed, approved by you)` }],
       })));
@@ -427,9 +425,9 @@ export function blankItem(d, over) {
   return {
     id: uid(), title: "", description: "", type: "Action", status: "Planned", mode: "Action",
     priority: "P3", owner: d.settings.displayName || "Me", waitingOn: "", project: "", mob: "",
-    workstream: "", country: d.settings.defaultCountry || "", client: "", contexts: [],
+    contexts: [...(d.settings.defaultContexts || [])],
     due: "", nextChase: "", lastChased: "", completed: "", archivedAt: "", created: todayISO(), updatedAt: todayISO(),
-    rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50, focus: false, estimate: "",
+    rag: "", nextAction: "", blocker: "", focus: false, estimate: "",
     subtasks: [], source: null, personId: "",
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
     confidentiality: "Internal", notes: [], extra: {}, outcome: "", ...over,

@@ -217,9 +217,9 @@ ${meeting.notes}`;
     const base = (over) => ({
       id: uid(), title: "", description: "", type: "Action", status: "Planned", mode: "Action",
       priority: "P3", owner: data.settings.displayName || "Me", waitingOn: "", project: meeting.project || "", mob: meeting.mob || "",
-      workstream: "", country: data.settings.defaultCountry || "", client: "", contexts: meeting.contexts || [],
+      contexts: meeting.contexts || [],
       due: "", nextChase: "", lastChased: "", completed: "", archivedAt: "", created: todayISO(), updatedAt: todayISO(),
-      rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50, focus: false, estimate: "",
+      rag: "", nextAction: "", blocker: "", focus: false, estimate: "",
       subtasks: [], source: src, personId: "",
       flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
       confidentiality: "Internal", notes: [{ ts: todayISO(), text: `From ${src.label} (AI-proposed, approved by you)` }],

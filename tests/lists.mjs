@@ -4,7 +4,8 @@ import { readFileSync } from "fs";
 
 const src = readFileSync("/home/user/CMAC-dashboard/src/lib/model.js", "utf8");
 function grab(name) {
-  const i = src.indexOf("export const " + name + " = ");
+  let i = src.indexOf("export const " + name + " = ");
+  if (i === -1) i = src.indexOf("const " + name + " = ");
   if (i === -1) return null;
   const start = src.indexOf("=", i) + 1;
   // Read to the matching close of the first [ or { after the =
@@ -21,6 +22,7 @@ function grab(name) {
 const P = (n, ok, x = "") => { console.log((ok ? "PASS  " : "FAIL  ") + n + (x ? "  — " + x : "")); if (!ok) process.exitCode = 1; };
 
 const WS = grab("WORKSTREAMS"), LWS = grab("LEGACY_WORKSTREAMS");
+const CTX = grab("SEED_CONTEXTS");
 const MS = grab("MOB_STAGES"), LMS = grab("LEGACY_MOB_STAGES");
 const CF = grab("CONFIDENTIALITY"), LCF = grab("LEGACY_CONF"), SH = grab("SHAREABLE");
 const ST = grab("STATUSES"), LST = grab("LEGACY_STATUS");
@@ -47,6 +49,17 @@ function complete(label, old, now, map) {
   P(label + " — every recorded value still has a home", orphans.length === 0, orphans.join(", "));
 }
 complete("Workstreams", OLD.WS, WS, LWS);
+
+/* Workstream was absorbed into the contexts. Every surviving workstream must
+   exist as a Function context, or a stored value would land on a tag that
+   does not exist. */
+const FNS = CTX.filter((c) => c.type === "Function").map((c) => c.name);
+const missing = WS.filter((w) => !FNS.includes(w));
+P("Every workstream exists as a Function context", missing.length === 0, missing.join(", "));
+P("No name appears twice in the seeded contexts",
+  new Set(CTX.map((c) => c.name)).size === CTX.length);
+P("Contexts are the only classification list left",
+  !/^export const (COUNTRIES|HORIZONS)\b/m.test(src), "COUNTRIES and HORIZONS are gone");
 complete("Mobilisation stages", OLD.MS, MS, LMS);
 complete("Confidentiality", OLD.CF, CF, LCF);
 complete("Work item status", OLD.ST, ST, LST);
@@ -79,7 +92,8 @@ P("Blocked is a flag, not a stage", !PS.includes("Blocked") && !MS.includes("Blo
 P("Mobilisation 'On Hold' keeps the stage it reached", LMS["On Hold"] === "Preparing & Planning");
 
 console.log("\n" + [
-  "workstreams      " + OLD.WS.length + " -> " + WS.length,
+  "workstreams      " + OLD.WS.length + " -> " + WS.length + " (now Function contexts)",
+  "seeded contexts  " + CTX.length,
   "mob stages       " + OLD.MS.length + " -> " + MS.length,
   "mob workstreams  22 -> " + MW.length,
   "confidentiality  " + OLD.CF.length + " -> " + CF.length,

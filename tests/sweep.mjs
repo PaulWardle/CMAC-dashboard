@@ -78,15 +78,15 @@ await page.waitForSelector(".nitem", { timeout: 20000 });
 
 /* nav items are div.nitem, and their accessible text can include a count badge */
 const go = async (label) => {
-  await page.locator(".nitem", { hasText: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\d*$") }).first().click();
+  await page.locator(".nitem .lbl", { hasText: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$") }).first().click();
   await page.waitForTimeout(400);
 };
 const modalOpen = () => page.locator(".modal").count();
 
 /* ============================================================ */
 sec("A. Every screen renders without error");
-const SCREENS = ["Command Centre", "Capture", "My Priorities", "Action Board", "Waiting & Chasing",
-  "Portfolio", "Projects", "Mobilisations", "Goals & OKRs", "SLA & KPIs",
+const SCREENS = ["Command Centre", "Capture", "Action Board", "Waiting & Chasing",
+  "Portfolio", "Goals & OKRs", "SLA & KPIs",
   "Operational Contexts", "People", "Meetings", "Risks & Issues", "Decisions & Commitments",
   "COO & Board Update", "Newsletter", "Weekly Review", "Archive & History", "Settings & Data"];
 for (const label of SCREENS) {
@@ -403,19 +403,17 @@ await soft("Discarding a read asks first", async () => {
 
 /* ============================================================ */
 sec("G. Projects & mobilisations");
-await soft("Create a project", async () => {
-  await go("Projects");
+await soft("Create a project from Portfolio", async () => {
+  await go("Portfolio");
   await page.locator('button:text-is("+ New project")').click();
   await page.waitForSelector(".modal", { timeout: 6000 });
   await page.locator(".modal input.input").first().fill("QA sweep project");
   await page.locator('.modal button:text-is("Create project")').click();
-  await page.waitForTimeout(600);
-  if (!(await page.locator("text=QA sweep project").count())) throw new Error("not listed");
+  await page.waitForTimeout(700);
+  if (!(await page.locator("text=QA sweep project").count())) throw new Error("not created");
   return true;
 });
-await soft("Project detail opens and offers a report", async () => {
-  await page.locator('.card:has-text("QA sweep project")').first().click();
-  await page.waitForTimeout(500);
+await soft("Creating lands straight on the new project, not a second list", async () => {
   if (!(await page.locator('button:text-is("← Portfolio")').count())) throw new Error("detail did not open");
   if (!(await page.locator('button:text-is("Generate report")').count())) throw new Error("no report button");
   return true;
@@ -428,27 +426,25 @@ await soft("Project update posts", async () => {
   if (!(await page.locator("text=Kick-off completed").count())) throw new Error("update not shown");
   return true;
 });
-await soft("Table view renders", async () => {
+await soft("Back from a project returns to Portfolio", async () => {
   await page.locator('button:text-is("← Portfolio")').click();
-  await page.waitForTimeout(300);
-  await page.locator('button:text-is("Table")').click();
-  await page.waitForTimeout(400);
-  if (!(await page.locator("table.tbl").count())) throw new Error("no table");
+  await page.waitForTimeout(500);
+  const h = await page.locator(".h1").first().innerText();
+  if (!/Portfolio/.test(h)) throw new Error("landed on " + h);
+  if (!(await page.locator('.pfrow:has-text("QA sweep project")').count())) throw new Error("the new project is not in the portfolio");
   return true;
 });
-await soft("Create a mobilisation", async () => {
-  await go("Mobilisations");
+await soft("Create a mobilisation from Portfolio", async () => {
+  await go("Portfolio");
   await page.locator('button:text-is("+ New mobilisation")').click();
   await page.waitForSelector(".modal", { timeout: 6000 });
   await page.locator(".modal input.input").first().fill("QA sweep mobilisation");
   await page.locator('.modal button:text-is("Create mobilisation")').click();
-  await page.waitForTimeout(600);
-  if (!(await page.locator("text=QA sweep mobilisation").count())) throw new Error("not listed");
+  await page.waitForTimeout(700);
+  if (!(await page.locator("text=QA sweep mobilisation").count())) throw new Error("not created");
   return true;
 });
 await soft("Mobilisation checklist accepts a requirement", async () => {
-  await page.locator('.card:has-text("QA sweep mobilisation")').first().click();
-  await page.waitForTimeout(500);
   await page.locator('input[placeholder], .card input.input').nth(1).fill("Driver onboarding complete").catch(() => {});
   const reqInputs = page.locator(".card input.input");
   const n = await reqInputs.count();

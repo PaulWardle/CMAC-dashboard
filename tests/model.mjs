@@ -28,7 +28,7 @@ const v1 = () => ({
 
 const { data: m, changed } = migrate(v1());
 P("The migration reports that it changed something", changed);
-P("Document version advances to 2", m.v === 2);
+P("Document version advances to 3", m.v === 3);
 
 /* ---------- status and mode ---------- */
 const byId = (id) => m.workItems.find((w) => w.id === id);
@@ -52,7 +52,7 @@ const ctxId = (n) => (m.contexts.find((c) => c.name === n) || {}).id;
 P("Spain becomes an Operational Context tag", byId("a").contexts.includes(ctxId("Spain")));
 P("Greece maps to Greece & Cyprus", byId("e").contexts.includes(ctxId("Greece & Cyprus")));
 P("'Group' means no geography, not a ninth one", byId("b").contexts.length === 0);
-P("A project carries its context across too", m.projects[0].contexts.length === 0, "Group → none");
+P("A project carries its context across too", m.projects[0].contexts.map((i) => m.contexts.find((c) => c.id === i).name).join(",") === "Operations", "Group → no geography, workstream → Operations");
 
 /* ---------- people harvested ---------- */
 const names = m.people.map((p) => p.name).sort();
@@ -68,7 +68,20 @@ P("Open work is not archived", !byId("a").archivedAt && !byId("b").archivedAt);
 /* ---------- lists ---------- */
 P("Project stage Discovery → Scoping", m.projects[0].stage === "Scoping");
 P("Mobilisation BAU Handover → Hypercare, not Closed", m.mobs[0].stage === "Hypercare");
-P("Workstream moves off the initiative-shaped list", m.projects[0].workstream === "Operations");
+/* ---------- the three retired classification fields ---------- */
+const nameOf = (id) => (m.contexts.find((c) => c.id === id) || {}).name;
+P("Workstream becomes a Function context", m.contexts.some((c) => c.name === "Operations" && c.type === "Function"));
+P("…and the field is gone", m.workItems.every((w) => w.workstream === undefined));
+P("Country is gone as a field", m.workItems.every((w) => w.country === undefined));
+P("The default country becomes default context tags",
+  (m.settings.defaultContexts || []).map(nameOf).join(",") === "UK Operations" && m.settings.defaultCountry === undefined);
+P("Horizon is gone", m.workItems.every((w) => w.horizon === undefined));
+P("Rank is gone", m.workItems.every((w) => w.rank === undefined));
+P("The only thing horizon knew that priority did not — Parked — survives as P5",
+  byId("c").priority === "P5");
+P("No value appears in two different classification lists",
+  (() => { const fns = m.contexts.filter((c) => c.type === "Function").map((c) => c.name);
+           return new Set(fns).size === fns.length; })());
 P("Board confidential → Execs", m.updates[0].confidentiality === "Execs");
 P("Legacy decision status Draft → Required", byId("b").extra.decisionStatus === "Required");
 

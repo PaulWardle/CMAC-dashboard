@@ -22,7 +22,7 @@ const SORTS = {
   "Recently moved": (a, b) => (b.e.updatedAt || "").localeCompare(a.e.updatedAt || ""),
 };
 
-export default function Portfolio({ data, openProject, openMob, openItem }) {
+export default function Portfolio({ data, openProject, openMob, openItem, newProject, newMob }) {
   const [sort, setSort] = useState("Needs me");
   const [ctx, setCtx] = useState("");
   const [kind, setKind] = useState("All");
@@ -51,7 +51,13 @@ export default function Portfolio({ data, openProject, openMob, openItem }) {
 
   return (
     <div>
-      <h2 className="h1">Portfolio</h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <h2 className="h1">Portfolio</h2>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button className="btn sm" onClick={newProject}>+ New project</button>
+          <button className="btn pri sm" onClick={newMob}>+ New mobilisation</button>
+        </span>
+      </div>
       <p className="sub">Everything in flight, projects and mobilisations together, ordered by what most needs you. Health is calculated from overdue work, blockers, how long since anything moved and how close the target is — not from a colour anybody has to remember to set.</p>
 
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", marginBottom: 12 }}>

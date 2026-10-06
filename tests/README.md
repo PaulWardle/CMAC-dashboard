@@ -41,7 +41,9 @@ document on every single load.
 
 **`lists.mjs`** — reads the constants straight out of `src/lib/model.js` and
 proves no stored value is ever orphaned, nothing live is mapped to a closed
-state, and nothing restricted becomes shareable.
+state, and nothing restricted becomes shareable. Also proves there is only
+ONE classification list left: every retired workstream has a Function context
+of the same name to land on, and no name appears twice.
 
 **`v2.mjs`** — the v2 behaviour in the browser (22 checks). The rebuilt Capture
 (that it groups a dump by kind, separates the user's actions from what others
@@ -52,7 +54,7 @@ after the records exist, and the confidentiality fence — it writes a
 development note about a named person and then asserts that the text never
 appears in an outgoing AI request while the person's name still does.
 
-**`sweep.mjs`** — the full interaction sweep (77 checks). Every screen renders,
+**`sweep.mjs`** — the full interaction sweep (74 checks). Every screen renders,
 the work-item lifecycle (create, validate, type-specific fields, notes, edit,
 delete), dialog and keyboard behaviour including Escape on stacked dialogs,
 the AI cost controls (which model each job uses, that the workspace brief is

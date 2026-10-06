@@ -18,10 +18,10 @@ import {
 } from "./ui";
 import {
   STATUSES, OPEN_STATUSES, LEGACY_STATUS, MODES, PRIORITIES, PRIO_LABEL, PRIO_HINT, LEGACY_PRIORITY,
-  RAGS, CONTEXT_TYPES, SEED_CONTEXTS, COUNTRIES, COUNTRY_TO_CONTEXT, TYPES, CORE_TYPES,
-  WORKSTREAMS, LEGACY_WORKSTREAMS, PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
+  RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
+  PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
-  HORIZONS, RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
+  RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
   itemAttention, portfolioAttention, okrProgress, okrHealth, migrate,
   ctxName, ctxNames, ctxByName, personName, personByName, inContext, personLoad,
@@ -87,29 +87,6 @@ function appendLearned(d, notes) {
   return d;
 }
 
-function captureParsePrompt(text, d) {
-  const lim = (s, n) => String(s || "").trim().slice(0, n);
-  const ctx = d.context || {};
-  const openTitles = d.workItems.filter((w) => OPEN_STATUSES.includes(w.status)).slice(0, 150).map((w) => w.title);
-  const ctxBlock = [
-    lim(ctx.org, 2500) && "ABOUT THIS OPERATION:\n" + lim(ctx.org, 2500),
-    lim(ctx.people, 2500) && "PEOPLE & ROLES (use for owners/waiting-on):\n" + lim(ctx.people, 2500),
-    lim(ctx.clients, 2000) && "CLIENTS & TERMINOLOGY:\n" + lim(ctx.clients, 2000),
-    lim(ctx.rules, 2500) && "STANDING TRIAGE RULES (apply these when setting priority, flags, workstream and routing):\n" + lim(ctx.rules, 2500),
-    lim(ctx.learned, 2500) && "NOTES PREVIOUSLY LEARNED (from earlier captures and conversations — treat as part of the brief):\n" + lim(ctx.learned, 2500),
-  ].filter(Boolean).join("\n\n");
-  return `You extract and TRIAGE structured work records for an operations director's tracking system. From the input below, identify every distinct action, task, risk, issue, decision, commitment, chaser or follow-up. Respond ONLY with a JSON object (no markdown, no preamble): {"records": [array of records as specified below], "questions": [0-3 short clarifying questions, ONLY where something genuinely important is missing or ambiguous — an unknown person behind initials, an urgent item with no date, unclear which project. Empty array if none.], "learnings": [0-4 short notes worth remembering permanently — ONLY genuinely new lasting facts this input reveals: a person and their role, a client fact, an abbreviation, a standing preference. Never repeat anything already in the context brief. Empty array if nothing new.]}
-Each record:
-{"title": string (short, imperative), "description": string, "type": one of ${JSON.stringify(TYPES)}, "owner": string or "", "waitingOn": string or "", "due": "YYYY-MM-DD" or "", "priority": one of ["Critical","High","Medium","Low"], "horizon": one of ["Now","Next","Later"], "country": one of ${JSON.stringify(COUNTRIES)} or "", "workstream": exact name from ${JSON.stringify(WORKSTREAMS)} or "", "project": exact name from ${JSON.stringify(d.projects.map((p) => p.name))} or "", "mobilisation": exact name from ${JSON.stringify(d.mobs.map((m) => m.name))} or "", "nextAction": string or "", "flags": {"board": bool, "coo": bool, "news": bool}, "duplicateOf": exact title from the existing-items list below or "", "reasoning": string (one short sentence explaining the triage — priority, routing, flags)}
-
-${ctxBlock ? ctxBlock + "\n\n" : ""}EXISTING OPEN ITEMS (check new records against these; if one clearly covers the same work, set duplicateOf to its exact title):
-${JSON.stringify(openTitles)}
-
-Rules: today is ${fmtD(todayISO())} (${todayISO()}). Resolve relative dates like "Friday" or "end of month" to real dates. Do not invent owners, dates or facts not present in the input — but DO use the context above to resolve names to the right people and to apply the standing triage rules. Leave fields empty rather than guessing. Only set flags if the input or the standing rules clearly imply board/COO/newsletter relevance. The input may include typed notes plus attached emails, documents, spreadsheets and screenshots — read them all; note the source file in the description where useful.
-INPUT:
-${text}`;
-}
-
 /* ---------- demonstration data ---------- */
 function seedData() {
   return {
@@ -138,9 +115,9 @@ function stripDemo(d) {
     id: uid(), title: "Snag list — app improvement ideas",
     description: "Every time this app jars, is missing something, or does too much — add a note to this item. Bring the whole list to Claude in one batch session; far cheaper than one tweak at a time.",
     type: "Idea", status: "Inbox", priority: "P4", owner: "Me", waitingOn: "",
-    project: "", mob: "", workstream: "", country: (d.settings && d.settings.defaultCountry) || "UK", client: "",
+    project: "", mob: "", contexts: [],
     due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
-    rag: "", nextAction: "Add snags as you find them", blocker: "", horizon: "Later", rank: 90,
+    rag: "", nextAction: "Add snags as you find them", blocker: "",
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal",
     notes: [], extra: {}, outcome: "",
   });
@@ -514,9 +491,9 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
   const isNew = !item.id;
   const [w, setW] = useState(() => ({
     id: item.id || uid(), title: "", description: "", type: "Action", status: "Inbox", priority: "P3",
-    owner: meName(data), waitingOn: "", project: "", mob: "", workstream: "", country: data.settings.defaultCountry || "UK",
-    client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
-    rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50,
+    owner: meName(data), waitingOn: "", project: "", mob: "",
+    due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
+    rag: "", nextAction: "", blocker: "",
     mode: "Action", contexts: [], subtasks: [], focus: false, estimate: "", source: null, personId: "",
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
     confidentiality: "Internal", notes: [], extra: {}, outcome: "", ...JSON.parse(JSON.stringify(item)),
@@ -565,15 +542,12 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Due date"><input type="date" className="input" value={w.due} onChange={(e) => set("due", e.target.value)} /></F>
           <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></F>
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
-          <F label="Horizon (priorities board)"><select className="select" value={w.horizon} onChange={(e) => set("horizon", e.target.value)}>{HORIZONS.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Description" span><textarea className="ta" value={w.description} onChange={(e) => set("description", e.target.value)} /></F>
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
           {more && <>
-            <F label="Workstream"><select className="select" value={w.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((t) => <option key={t}>{t}</option>)}</select></F>
             <F label="Estimate (mins)"><input className="input" type="number" min="0" step="15" value={w.estimate || ""} onChange={(e) => set("estimate", e.target.value)} placeholder="optional" /></F>
             <F label="RAG"><select className="select" value={w.rag} onChange={(e) => set("rag", e.target.value)}><option value="">—</option>{RAGS.map((t) => <option key={t}>{t}</option>)}</select></F>
             <F label="Confidentiality"><select className="select" value={w.confidentiality} onChange={(e) => set("confidentiality", e.target.value)}>{CONFIDENTIALITY.map((t) => <option key={t}>{t}</option>)}</select></F>
-            <F label="Client"><input className="input" value={w.client} onChange={(e) => set("client", e.target.value)} /></F>
           </>}
           {(w.status === "Blocked" || w.blocker) && <F label="Blocker / reason" span><input className="input" value={w.blocker} onChange={(e) => set("blocker", e.target.value)} /></F>}
           {(isWaiting(w)) && <>
@@ -709,7 +683,7 @@ function ItemsTable({ data, rows, onOpen, cols }) {
         {all.includes("owner") && th("owner", "Owner")}
         {all.includes("waitingOn") && th("waitingOn", "Waiting on")}
         {all.includes("parent") && th("_parent", "Project / Mob")}
-        {all.includes("country") && th("country", "Country")}
+        {all.includes("contexts") && <th>Contexts</th>}
         {all.includes("due") && th("due", "Due")}
         {all.includes("nextChase") && th("nextChase", "Next chase")}
         {all.includes("updated") && th("updatedAt", "Updated")}
@@ -723,7 +697,7 @@ function ItemsTable({ data, rows, onOpen, cols }) {
           {all.includes("owner") && <td>{w.owner}</td>}
           {all.includes("waitingOn") && <td>{w.waitingOn || "—"}</td>}
           {all.includes("parent") && <td>{w._parent || "—"}</td>}
-          {all.includes("country") && <td>{w.country || "—"}</td>}
+          {all.includes("contexts") && <td>{ctxNames(data, w.contexts).join(", ") || "—"}</td>}
           {all.includes("due") && <td style={isOverdue(w) ? { color: "#FD0E33", fontWeight: 600 } : null}>{fmtD(w.due)}</td>}
           {all.includes("nextChase") && <td>{fmtD(w.nextChase)}</td>}
           {all.includes("updated") && <td className="mono">{fmtD(w.updatedAt)}</td>}
@@ -748,7 +722,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const chaseDue = waiting.filter((w) => !w.nextChase || daysUntil(w.nextChase) <= 0);
   const decisions = open.filter((w) => w.type === "Decision");
   const stale = open.filter((w) => daysSince(w.updatedAt) > data.settings.staleItem);
-  const top5 = open.filter((w) => w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 5);
+  const top5 = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority)).slice(0, 5);
   const focused = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority));
   const peopleHot = (data.people || []).filter((p) => personLoad(data, p).overdue.length > 0).length;
   const toProcess = (data.meetings || []).filter((m) => !m.processed && m.notes).length;
@@ -846,7 +820,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 14, alignItems: "start" }}>
         {(show("Today") || show("This week") || show("Executive")) && <div className="card">
           <div className="h2" style={{ marginTop: 0 }}>My top five priorities</div>
-          {top5.length === 0 && <div className="sub">Nothing marked "Now" yet — set horizons in My Priorities.</div>}
+          {top5.length === 0 && <div className="sub">Nothing in Focus yet — star an item on the Action Board to put it here.</div>}
           {top5.map((w, i) => (
             <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>
               <span className="mono" style={{ width: 16 }}>{i + 1}</span>
@@ -910,72 +884,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
    Capture inbox (natural-language + AI parsing + review queue)
    ============================================================ */
 /* Capture now lives in src/screens/Capture.jsx */
-
-/* ============================================================
-   My Priorities (Now / Next / Later / Parked with drag & drop)
-   ============================================================ */
-function Priorities({ data, mutate, openItem }) {
-  const open = openItems(data);
-  const nowCount = open.filter((w) => w.horizon === "Now").length;
-  const drop = (h) => (e) => {
-    e.preventDefault();
-    const id = e.dataTransfer.getData("id"); if (!id) return;
-    mutate((d) => { const w = d.workItems.find((x) => x.id === id); if (w) { w.horizon = h; w.updatedAt = todayISO(); } return d; }, "Moved to " + h);
-  };
-  const bump = (id, dir) => mutate((d) => {
-    const w = d.workItems.find((x) => x.id === id); if (w) w.rank = clamp((w.rank || 50) + dir, 1, 99); return d;
-  }, null);
-  const warnings = [];
-  if (nowCount > 5) warnings.push(`${nowCount} items are marked "Now" — more than five dilutes focus.`);
-  open.filter((w) => ["P1", "P2"].includes(w.priority) && !w.nextAction).slice(0, 3).forEach((w) => warnings.push(`High-priority item without a next action: ${w.title}`));
-  open.filter((w) => w.status === "Blocked" && ["P1", "P2"].includes(w.priority)).slice(0, 3).forEach((w) => warnings.push(`High-priority item blocked: ${w.title}`));
-  return (
-    <div>
-      <h2 className="h1">My Priorities</h2>
-      <p className="sub">Drag cards between horizons. Order within a column uses the ▲▼ rank controls. The top five "Now" items feed the Command Centre.</p>
-      {warnings.map((w, i) => <div key={i} className="warnbox">{w}</div>)}
-      <div className="kwrap">
-        {HORIZONS.map((h) => {
-          const items = open.filter((w) => w.horizon === h).sort((a, b) => (a.rank || 99) - (b.rank || 99) || prioRank(a.priority) - prioRank(b.priority));
-          return (
-            <div key={h} className="kcol" style={{ minWidth: 265, width: 265 }} onDragOver={(e) => e.preventDefault()} onDrop={drop(h)}>
-              <h4>{h}<span>{items.length}</span></h4>
-              <div className="kbody">
-                {items.map((w) => (
-                  <div key={w.id} className="kcard" draggable onDragStart={(e) => e.dataTransfer.setData("id", w.id)}>
-                    <div className="kt" onClick={() => openItem(w)} style={{ cursor: "pointer" }}><Rag v={w.rag} />{w.title}</div>
-                    <div className="kmeta">
-                      <Badge p={w.priority} />
-                      {w.due && <span className="chip" style={isOverdue(w) ? { color: "#FD0E33" } : null}>{fmtD(w.due)}</span>}
-                      {parentLabel(data, w) && <span className="chip">{parentLabel(data, w)}</span>}
-                      {w.status === "Blocked" && <span className="chip" style={{ color: "#FD0E33" }}>Blocked</span>}
-                      {isWaiting(w) && <span className="chip">Waiting: {w.waitingOn || "?"}</span>}
-                      <span style={{ marginLeft: "auto", display: "flex", gap: 2 }}>
-                        <button className="btn sm" onClick={() => bump(w.id, -5)} title="Raise">▲</button>
-                        <button className="btn sm" onClick={() => bump(w.id, 5)} title="Lower">▼</button>
-                      </span>
-                    </div>
-                  </div>))}
-                {!items.length && <div className="sub" style={{ padding: 6 }}>Drop items here.</div>}
-              </div>
-            </div>);
-        })}
-      </div>
-      <div className="h2">Daily planning</div>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-        <div className="card"><div className="flab">Quick wins (low effort, ready to go)</div>
-          {open.filter((w) => ["P4", "P5"].includes(w.priority) && !isWaiting(w) && w.nextAction).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
-        </div>
-        <div className="card"><div className="flab">To chase today</div>
-          {open.filter((w) => isWaiting(w) && (!w.nextChase || daysUntil(w.nextChase) <= 0)).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title} <span className="chip">{w.waitingOn}</span></div>)}
-        </div>
-        <div className="card"><div className="flab">Delegation candidates (owned by me, not started)</div>
-          {open.filter((w) => isMine(data, w) && ["Planned", "Inbox"].includes(w.status) && w.priority !== "P1").slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ============================================================
    Action board — Kanban, with Waiting as a column fed by MODE rather
@@ -1316,7 +1224,7 @@ function Decisions({ data, openItem, newItem }) {
 function emptyProject(settings) {
   return { id: uid(), name: "", code: "", objective: "", owner: "", sponsor: "", stage: "Idea", rag: "Green",
     start: todayISO(), target: "", forecast: "", progress: 0, confidence: "Medium", position: "",
-    nextMilestone: "", nextMilestoneDate: "", country: settings.defaultCountry || "UK", workstream: "", client: "",
+    nextMilestone: "", nextMilestoneDate: "", contexts: [...(settings.defaultContexts || [])],
     blocked: false, blockedBy: "", blocker: "", updatedAt: todayISO() };
 }
 function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
@@ -1342,8 +1250,13 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
               {RAGS.map((s) => <option key={s}>{s}</option>)}
             </select></F>
           <F label="Confidence"><select className="select" value={p.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
-          <F label="Country"><select className="select" value={p.country} onChange={(e) => set("country", e.target.value)}>{COUNTRIES.map((s) => <option key={s}>{s}</option>)}</select></F>
-          <F label="Workstream"><select className="select" value={p.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <F label="Operational contexts" span>
+            <div className="ctxpick">
+              {data.contexts.filter((c) => c.active || (p.contexts || []).includes(c.id)).map((c) => (
+                <button key={c.id} type="button" className={"ctxtag" + ((p.contexts || []).includes(c.id) ? " on" : "")}
+                  onClick={() => set("contexts", (p.contexts || []).includes(c.id) ? p.contexts.filter((x) => x !== c.id) : [...(p.contexts || []), c.id])}>
+                  {c.name}<i>{c.type}</i></button>))}
+            </div></F>
           <F label="Start"><input type="date" className="input" value={p.start} onChange={(e) => set("start", e.target.value)} /></F>
           <F label="Target date"><input type="date" className="input" value={p.target} onChange={(e) => set("target", e.target.value)} /></F>
           <F label="Forecast completion"><input type="date" className="input" value={p.forecast} onChange={(e) => set("forecast", e.target.value)} /></F>
@@ -1372,14 +1285,20 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
     </div>
   );
 }
-function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
-  const [view, setView] = useState("cards");
+function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, startNew, clearNew }) {
   const [editing, setEditing] = useState(null);
+  useEffect(() => { if (startNew) { setEditing({}); clearNew(); } }, [startNew]);
+  /* Portfolio is the list, so with nothing open there is nothing to show
+     here. The bounce is an effect, not a render-time call: navigating during
+     another component's render is what React warns about, and it fired
+     before the create modal had a chance to open. */
+  useEffect(() => { if (!detail && !editing && !startNew) back(); }, [detail, editing, startNew]);
   const [updText, setUpdText] = useState("");
   const active = data.projects;
   const saveProj = (p, isNew) => {
     mutate((d) => { if (isNew) d.projects.push(p); else d.projects = d.projects.map((x) => x.id === p.id ? p : x); return d; }, (isNew ? "Project created: " : "Project updated: ") + p.name);
     setEditing(null);
+    if (isNew) setDetail(p.id);
   };
   const delProj = (id) => {
     mutate((d) => { d.projects = d.projects.filter((x) => x.id !== id); d.workItems.forEach((w) => { if (w.project === id) w.project = ""; }); return d; }, "Project deleted");
@@ -1395,7 +1314,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
     const addUpdate = () => {
       if (!updText.trim()) return;
       mutate((d) => {
-        d.updates.push({ id: uid(), title: updText.slice(0, 80), date: todayISO(), period: monthName(), summary: updText, detail: "", rag: p.rag, project: p.id, mob: "", country: p.country, workstream: p.workstream, owner: "Me", confidentiality: "Internal", flags: { board: false, coo: false, news: false } });
+        d.updates.push({ id: uid(), title: updText.slice(0, 80), date: todayISO(), period: monthName(), summary: updText, detail: "", rag: p.rag, project: p.id, mob: "", contexts: p.contexts || [], owner: "Me", confidentiality: "Internal", flags: { board: false, coo: false, news: false } });
         const pr = d.projects.find((x) => x.id === p.id); if (pr) pr.updatedAt = todayISO();
         return d;
       }, "Update added to " + p.name);
@@ -1417,7 +1336,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
     return (
       <div>
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-          <button className="btn sm" onClick={() => setDetail(null)}>← Portfolio</button>
+          <button className="btn sm" onClick={back}>← Portfolio</button>
           <h2 className="h1" style={{ margin: 0 }}><Rag v={p.rag} />{p.name} <span className="mono">{p.code}</span></h2>
           <span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>Health: {h.label}</span>
@@ -1470,47 +1389,8 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
       </div>
     );
   }
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <h2 className="h1">Projects</h2>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          {["cards", "table"].map((v) => <button key={v} className={"btn sm" + (view === v ? " pri" : "")} onClick={() => setView(v)}>{v === "cards" ? "Cards" : "Table"}</button>)}
-          <button className="btn pri sm" onClick={() => setEditing({})}>+ New project</button>
-        </div>
-      </div>
-      {view === "cards" && <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", marginTop: 10 }}>
-        {active.map((p) => { const h = projectHealth(data, p); const items = data.workItems.filter((w) => w.project === p.id); return (
-          <div key={p.id} className="card" style={{ cursor: "pointer", borderTop: "3px solid " + (p.rag === "Red" ? "#FD0E33" : p.rag === "Amber" ? "#D97706" : "#1A7F44") }} onClick={() => setDetail(p.id)}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <b>{p.name}</b><span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
-            </div>
-            <div className="sub" style={{ margin: "3px 0 6px" }}>{p.objective?.slice(0, 90)}</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-              <div className="prog" style={{ flex: 1 }}><div style={{ width: p.progress + "%" }} /></div><span className="mono">{p.progress}%</span>
-            </div>
-            <div className="kmeta">
-              <span className="chip">{p.owner || "no owner"}</span>
-              <span className="chip">Target {fmtD(p.target)}</span>
-              {h.overdue > 0 && <span className="chip" style={{ color: "#FD0E33" }}>{h.overdue} overdue</span>}
-              {h.decis > 0 && <span className="chip">{h.decis} decision{h.decis > 1 ? "s" : ""}</span>}
-              {h.stale && <span className="chip" style={{ color: "#B45309" }}>stale</span>}
-              <span className="chip">{items.length} items</span>
-              {p.demo && <span className="chip">demo</span>}
-            </div>
-          </div>); })}
-      </div>}
-      {view === "table" && <table className="tbl" style={{ marginTop: 10 }}><thead><tr><th>Project</th><th>Stage</th><th>RAG</th><th>Owner</th><th>Progress</th><th>Target</th><th>Forecast</th><th>Health</th><th>Updated</th></tr></thead><tbody>
-        {active.map((p) => { const h = projectHealth(data, p); return (
-          <tr key={p.id} className="click" onClick={() => setDetail(p.id)}>
-            <td><b>{p.name}</b></td><td>{p.stage}</td><td><Rag v={p.rag} />{p.rag}</td><td>{p.owner}</td>
-            <td>{p.progress}%</td><td>{fmtD(p.target)}</td><td>{fmtD(p.forecast)}</td>
-            <td>{h.label}</td><td className="mono">{fmtD(p.updatedAt)}</td>
-          </tr>); })}
-      </tbody></table>}
-      {editing && <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />}
-    </div>
-  );
+  if (!editing) return null;
+  return <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />;
 }
 
 /* ============================================================
@@ -1518,7 +1398,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
    ============================================================ */
 function MobModal({ data, mob, onSave, onClose, onDelete }) {
   useEscape(onClose);
-  const [m, setM] = useState(() => ({ id: uid(), name: "", client: "", kind: "New client", country: data.settings.defaultCountry, owner: "", sponsor: "", stage: "Discovery", rag: "Green", goLive: "", hypercareEnd: "", confidence: "Medium", position: "", checklist: [], golive: { recommendation: "", decision: "", decisionOwner: "", decisionDate: "", conditions: "", contingency: "" }, hypercare: [], updatedAt: todayISO(), ...JSON.parse(JSON.stringify(mob || {})) }));
+  const [m, setM] = useState(() => ({ id: uid(), name: "", client: "", kind: "New client", contexts: [...(data.settings.defaultContexts || [])], owner: "", sponsor: "", stage: "Discovery", rag: "Green", goLive: "", hypercareEnd: "", confidence: "Medium", position: "", checklist: [], golive: { recommendation: "", decision: "", decisionOwner: "", decisionDate: "", conditions: "", contingency: "" }, hypercare: [], updatedAt: todayISO(), ...JSON.parse(JSON.stringify(mob || {})) }));
   const set = (k, v) => setM((x) => ({ ...x, [k]: v }));
   const isNew = !mob?.name;
   return (
@@ -1537,7 +1417,13 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
               <option value="">Use the calculated value</option>
               {RAGS.map((s) => <option key={s}>{s}</option>)}
             </select></F>
-          <F label="Country"><select className="select" value={m.country} onChange={(e) => set("country", e.target.value)}>{COUNTRIES.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <F label="Operational contexts" span>
+            <div className="ctxpick">
+              {data.contexts.filter((c) => c.active || (m.contexts || []).includes(c.id)).map((c) => (
+                <button key={c.id} type="button" className={"ctxtag" + ((m.contexts || []).includes(c.id) ? " on" : "")}
+                  onClick={() => set("contexts", (m.contexts || []).includes(c.id) ? m.contexts.filter((x) => x !== c.id) : [...(m.contexts || []), c.id])}>
+                  {c.name}<i>{c.type}</i></button>))}
+            </div></F>
           <F label="Confidence"><select className="select" value={m.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Go-live date"><input type="date" className="input" value={m.goLive} onChange={(e) => set("goLive", e.target.value)} /></F>
           <F label="Hypercare ends"><input type="date" className="input" value={m.hypercareEnd} onChange={(e) => set("hypercareEnd", e.target.value)} /></F>
@@ -1562,12 +1448,14 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
     </div>
   );
 }
-function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
+function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail, back, startNew, clearNew }) {
   const [editing, setEditing] = useState(null);
   const [tab, setTab] = useState("readiness");
   const [hc, setHc] = useState({ text: "", cat: "Incident" });
   const [nc, setNc] = useState({ workstream: MOB_WORKSTREAMS[0], requirement: "", owner: "", due: "", signOff: false, signOffOwner: "" });
-  const saveMob = (m, isNew) => { mutate((d) => { if (isNew) d.mobs.push(m); else d.mobs = d.mobs.map((x) => x.id === m.id ? m : x); return d; }, (isNew ? "Mobilisation created: " : "Mobilisation updated: ") + m.name); setEditing(null); };
+  useEffect(() => { if (startNew) { setEditing({}); clearNew(); } }, [startNew]);
+  useEffect(() => { if (!detail && !editing && !startNew) back(); }, [detail, editing, startNew]);
+  const saveMob = (m, isNew) => { mutate((d) => { if (isNew) d.mobs.push(m); else d.mobs = d.mobs.map((x) => x.id === m.id ? m : x); return d; }, (isNew ? "Mobilisation created: " : "Mobilisation updated: ") + m.name); setEditing(null); if (isNew) setDetail(m.id); };
   const delMob = (id) => { mutate((d) => { d.mobs = d.mobs.filter((x) => x.id !== id); d.workItems.forEach((w) => { if (w.mob === id) w.mob = ""; }); return d; }, "Mobilisation deleted"); setEditing(null); setDetail(null); };
   const touchMob = (id, fn, label) => mutate((d) => { const m = d.mobs.find((x) => x.id === id); if (m) { fn(m); m.updatedAt = todayISO(); } return d; }, label);
   if (detail) {
@@ -1583,7 +1471,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
     return (
       <div>
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-          <button className="btn sm" onClick={() => setDetail(null)}>← Mobilisations</button>
+          <button className="btn sm" onClick={back}>← Portfolio</button>
           <h2 className="h1" style={{ margin: 0 }}><Rag v={m.rag} />{m.name}</h2>
           <span className="chip">{m.stage}</span>{m.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[m.blockedBy && "Waiting on " + m.blockedBy, m.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip">{m.client}</span>
@@ -1684,31 +1572,8 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail }) {
       </div>
     );
   }
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <h2 className="h1">Mobilisations</h2>
-        <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => setEditing({})}>+ New mobilisation</button>
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", marginTop: 10 }}>
-        {data.mobs.map((m) => { const r = mobReadiness(m); const g = daysUntil(m.goLive); return (
-          <div key={m.id} className="card" style={{ cursor: "pointer", borderTop: "3px solid " + (m.rag === "Red" ? "#FD0E33" : m.rag === "Amber" ? "#D97706" : "#1A7F44") }} onClick={() => setDetail(m.id)}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}><b>{m.name}</b><span className="chip">{m.stage}</span>{m.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[m.blockedBy && "Waiting on " + m.blockedBy, m.blocker].filter(Boolean).join(" — ")}>blocked</span>}</div>
-            <div className="sub" style={{ margin: "2px 0 6px" }}>{m.client} · {m.country}{m.demo ? " · demo" : ""}</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-              <div className="prog" style={{ flex: 1 }}><div style={{ width: r.pct + "%" }} /></div><span className="mono">{r.pct}% ready</span>
-            </div>
-            <div className="kmeta">
-              {g !== null && <span className={"chip"} style={g <= 7 && g >= 0 ? { color: "#FD0E33", fontWeight: 600 } : null}>{g >= 0 ? `go-live in ${g}d` : `live ${Math.abs(g)}d`}</span>}
-              <span className="chip">{m.owner}</span>
-              {m.golive?.decision && <span className="chip">{m.golive.decision}</span>}
-            </div>
-          </div>); })}
-        {!data.mobs.length && <div className="empty">No mobilisations yet.</div>}
-      </div>
-      {editing && <MobModal data={data} mob={editing} onSave={saveMob} onClose={() => setEditing(null)} onDelete={delMob} />}
-    </div>
-  );
+  if (!editing) return null;
+  return <MobModal data={data} mob={editing} onSave={saveMob} onClose={() => setEditing(null)} onDelete={delMob} />;
 }
 
 /* ============================================================
@@ -1999,7 +1864,7 @@ function boardSources(data, section) {
       ...data.workItems.filter((w) => w.type === "Issue" && OPEN_STATUSES.includes(w.status) && ["P1", "P2"].includes(w.priority)).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.extra?.corrective ? " — corrective: " + w.extra.corrective : ""}` }))];
     case "risks": return data.workItems.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.flags.board || ["P1", "P2"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `${w.title} (${w.extra?.rating || w.priority}). Mitigation: ${w.extra?.mitigation || "NONE RECORDED"}` }));
     case "decisions": return data.workItems.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status) && w.flags.board).map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}${w.extra?.recommended ? ". Recommended: " + w.extra.recommended : ""}` }));
-    case "next": return data.workItems.filter((w) => OPEN_STATUSES.includes(w.status) && w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 6).map((w) => ({ id: "w" + w.id, text: w.title }));
+    case "next": return data.workItems.filter((w) => OPEN_STATUSES.includes(w.status) && w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority)).slice(0, 6).map((w) => ({ id: "w" + w.id, text: w.title }));
     default: return [];
   }
 }
@@ -2044,8 +1909,8 @@ function ReportWorkspace({ data, mutate }) {
   const upd = (fn) => mutate((d) => { fn(d.cooDraft); return d; }, null);
   const srcFor = (k) => {
     const open = data.workItems.filter((w) => OPEN_STATUSES.includes(w.status));
-    if (k === "priorities") return open.filter((w) => w.horizon === "Now" && w.status !== "Blocked")
-      .sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 8)
+    if (k === "priorities") return open.filter((w) => w.focus && w.status !== "Blocked")
+      .sort((a, b) => prioRank(a.priority) - prioRank(b.priority)).slice(0, 8)
       .map((w) => ({ id: "w" + w.id, text: `${w.title}${w.due ? " — due " + fmtD(w.due) : ""}` }));
     if (k === "wins") return [
       ...data.updates.filter((u) => u.flags.coo && (!u.rag || u.rag === "Green")).map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
@@ -2067,7 +1932,7 @@ function ReportWorkspace({ data, mutate }) {
     ];
     const kws = COO_KEYWORDS[k] || [];
     return open.filter((w) => {
-      const blob = (w.title + " " + (w.description || "") + " " + (w.workstream || "")).toLowerCase();
+      const blob = (w.title + " " + (w.description || "") + " " + ctxNames(data, w.contexts).join(" ")).toLowerCase();
       return kws.some((t) => blob.includes(t));
     }).slice(0, 10).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.owner ? " (" + w.owner + ")" : ""}${w.due ? " — due " + fmtD(w.due) : ""}` }));
   };
@@ -2339,7 +2204,7 @@ function WeeklyReview({ data, mutate, go }) {
     ["Capture lessons from the week (note them in the relevant project)", "", null],
     ["Review stale items", open.filter((w) => daysSince(w.updatedAt) > data.settings.staleItem).length + " stale", "actions"],
     ["Empty your head — capture anything not yet in the system", "", "capture"],
-    ["Reset horizons — is 'Now' still right?", open.filter((w) => w.horizon === "Now").length + " in Now", "priorities"],
+    ["Review Focus — is it still the right handful?", open.filter((w) => w.focus).length + " in Focus", "actions"],
     ["Set top five priorities for next week", "", null],
     ["Note where you need support or escalation", "", null],
     ["Generate the weekly summary", "", null],
@@ -2389,32 +2254,6 @@ function WeeklyReview({ data, mutate, go }) {
 /* ============================================================
    Country views, Archive, Settings
    ============================================================ */
-function CountryView({ data, openItem, setNav, setProjDetail }) {
-  const [c, setC] = useState("UK");
-  const items = openItems(data).filter((w) => w.country === c);
-  const projs = data.projects.filter((p) => p.country === c && !["Closed", "Cancelled"].includes(p.stage));
-  const mobs = data.mobs.filter((m) => m.country === c && m.stage !== "Closed");
-  return (
-    <div>
-      <h2 className="h1">Country View</h2>
-      <div className="toolrow" style={{ marginTop: 8 }}>
-        {COUNTRIES.map((x) => <button key={x} className={"btn sm" + (c === x ? " pri" : "")} onClick={() => setC(x)}>{x}</button>)}
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))" }}>
-        <Stat n={items.length} l="Open items" />
-        <Stat n={items.filter(isOverdue).length} l="Overdue" tone={items.filter(isOverdue).length ? "bad" : ""} />
-        <Stat n={items.filter((w) => w.type === "Risk").length} l="Open risks" />
-        <Stat n={projs.length} l="Projects" />
-        <Stat n={mobs.length} l="Mobilisations" />
-      </div>
-      {projs.length > 0 && <><div className="h2">Projects — {c}</div>
-        {projs.map((p) => <div key={p.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => { setProjDetail(p.id); setNav("projects"); }}><Rag v={p.rag} /><span style={{ flex: 1 }}>{p.name}</span><span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}<span className="mono">{p.progress}%</span></div>)}</>}
-      <div className="h2">Open items — {c}</div>
-      <ItemsTable data={data} rows={items} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
-    </div>
-  );
-}
-
 function Archive({ data, openItem }) {
   const [q, setQ] = useState("");
   let rows = data.workItems.filter((w) => ["Done", "Cancelled"].includes(w.status));
@@ -2678,7 +2517,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
     r.readAsText(file);
   };
   const exportCsv = () => {
-    const csv = toCSV(data.workItems, [["ID", "id"], ["Title", "title"], ["Type", "type"], ["Status", "status"], ["Priority", "priority"], ["Owner", "owner"], ["Waiting on", "waitingOn"], ["Project", (w) => projName(data, w.project)], ["Mobilisation", (w) => mobName(data, w.mob)], ["Country", "country"], ["Due", "due"], ["Completed", "completed"], ["Outcome", "outcome"], ["Confidentiality", "confidentiality"], ["Updated", "updatedAt"]]);
+    const csv = toCSV(data.workItems, [["ID", "id"], ["Title", "title"], ["Type", "type"], ["Status", "status"], ["Priority", "priority"], ["Owner", "owner"], ["Waiting on", "waitingOn"], ["Project", (w) => projName(data, w.project)], ["Mobilisation", (w) => mobName(data, w.mob)], ["Contexts", (w) => ctxNames(data, w.contexts).join("; ")], ["Due", "due"], ["Completed", "completed"], ["Outcome", "outcome"], ["Confidentiality", "confidentiality"], ["Updated", "updatedAt"]]);
     downloadFile("cmac-occ-workitems-" + todayISO() + ".csv", csv, "text/csv");
   };
   return (
@@ -2691,7 +2530,13 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
       <div className="h2">Profile</div>
       <div className="card"><div className="frow">
         <F label="Your name / role"><input className="input" value={s.userName} onChange={(e) => set("userName", e.target.value)} /></F>
-        <F label="Default country"><select className="select" value={s.defaultCountry} onChange={(e) => set("defaultCountry", e.target.value)}>{COUNTRIES.map((c) => <option key={c}>{c}</option>)}</select></F>
+        <F label="Default contexts for new records" span>
+          <div className="ctxpick">
+            {data.contexts.filter((c) => c.active).map((c) => (
+              <button key={c.id} type="button" className={"ctxtag" + ((s.defaultContexts || []).includes(c.id) ? " on" : "")}
+                onClick={() => set("defaultContexts", (s.defaultContexts || []).includes(c.id) ? s.defaultContexts.filter((x) => x !== c.id) : [...(s.defaultContexts || []), c.id])}>
+                {c.name}<i>{c.type}</i></button>))}
+          </div></F>
       </div></div>
       <div className="h2">Stale thresholds (days without an update before flagging)</div>
       <div className="card"><div className="frow">
@@ -2880,8 +2725,8 @@ function Assistant({ data, mutate, auth, onClose }) {
         title: { type: "string" }, description: { type: "string" },
         type: { type: "string", enum: CORE_TYPES }, owner: { type: "string" }, waitingOn: { type: "string" },
         due: { type: "string", description: "YYYY-MM-DD" }, priority: { type: "string", enum: PRIORITIES },
-        horizon: { type: "string", enum: ["Now", "Next", "Later"] }, project: { type: "string", description: "exact project name" },
-        mobilisation: { type: "string", description: "exact mobilisation name" }, workstream: { type: "string" },
+        project: { type: "string", description: "exact project name" },
+        mobilisation: { type: "string", description: "exact mobilisation name" },
         contexts: { type: "array", items: { type: "string" }, description: "exact operational context names: " + data.contexts.filter((c) => c.active).map((c) => c.name).join(", ") },
         nextAction: { type: "string" },
       }, required: ["title"] },
@@ -2896,7 +2741,7 @@ function Assistant({ data, mutate, auth, onClose }) {
         focus: { type: "boolean", description: "true to mark as something the user intends to move" },
         due: { type: "string" }, owner: { type: "string" }, waitingOn: { type: "string" },
         nextAction: { type: "string" }, nextChase: { type: "string" }, lastChased: { type: "string" },
-        horizon: { type: "string", enum: HORIZONS }, blocker: { type: "string" }, outcome: { type: "string" },
+        blocker: { type: "string" }, outcome: { type: "string" },
         note: { type: "string" },
       }, required: ["title"] },
     },
@@ -2921,9 +2766,8 @@ function Assistant({ data, mutate, auth, onClose }) {
           title: a.title, description: a.description || "", type: CORE_TYPES.includes(a.type) ? a.type : "Action",
           mode: a.waitingOn ? "Waiting on" : "Action", priority: PRIORITIES.includes(a.priority) ? a.priority : "P3",
           owner: a.owner || meName(d), waitingOn: a.waitingOn || "", project: proj ? proj.id : "", mob: mob ? mob.id : "",
-          workstream: a.workstream || "",
           contexts: (a.contexts || []).map((nm) => (d.contexts.find((c) => c.name.toLowerCase() === String(nm).toLowerCase()) || {}).id).filter(Boolean),
-          due: a.due || "", nextAction: a.nextAction || "", horizon: HORIZONS.includes(a.horizon) ? a.horizon : "Next",
+          due: a.due || "", nextAction: a.nextAction || "",
           notes: [{ ts: todayISO(), text: "Created by the assistant on the user's instruction" }],
         }));
         created = a.title;
@@ -2938,7 +2782,7 @@ function Assistant({ data, mutate, auth, onClose }) {
                   d.workItems.find((x) => x.title.toLowerCase() === String(a.title || "").toLowerCase());
         if (!w) return d;
         const changed = [];
-        [["status", STATUSES], ["priority", PRIORITIES], ["horizon", HORIZONS]].forEach(([k, allowed]) => {
+        [["status", STATUSES], ["priority", PRIORITIES], ["mode", MODES]].forEach(([k, allowed]) => {
           if (a[k] && allowed.includes(a[k]) && w[k] !== a[k]) { w[k] = a[k]; changed.push(k + " → " + a[k]); }
         });
         ["due", "owner", "waitingOn", "nextAction", "nextChase", "lastChased", "blocker", "outcome"].forEach((k) => {
@@ -3214,8 +3058,8 @@ function ClipFab({ open, onClick }) {
 /* Navigation reflects how the work is thought about, not how the records
    are stored. "Tasks database" is not a place anyone wants to go. */
 const NAV = [
-  ["Daily working", [["command", "Command Centre"], ["capture", "Capture"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
-  ["Oversight", [["portfolio", "Portfolio"], ["projects", "Projects"], ["mobs", "Mobilisations"], ["okrs", "Goals & OKRs"], ["kpis", "SLA & KPIs"]]],
+  ["Daily working", [["command", "Command Centre"], ["capture", "Capture"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
+  ["Oversight", [["portfolio", "Portfolio"], ["okrs", "Goals & OKRs"], ["kpis", "SLA & KPIs"]]],
   ["Context", [["contexts", "Operational Contexts"], ["people", "People"], ["meetings", "Meetings"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"]]],
   ["Reporting", [["coo", "COO & Board Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
@@ -3235,6 +3079,7 @@ export default function App({ auth }) {
   const [pendingReqs, setPendingReqs] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [screenKey, setScreenKey] = useState(0);
+  const [startNew, setStartNew] = useState("");
   const [syncNote, setSyncNote] = useState("");
   const lastSynced = useRef(0);
   const prevNav = useRef("command");
@@ -3479,20 +3324,20 @@ export default function App({ auth }) {
       case "command": return <CommandCentre data={data} mutate={mutate} openItem={openItem} go={go} openProject={openProject} openMob={openMob} />;
       case "assistant": return <Assistant data={data} mutate={mutate} auth={auth} onClose={toggleAssistant} />;
       case "capture": return <Capture data={data} mutate={mutate} openItem={openItem} />;
-      case "priorities": return <Priorities data={data} mutate={mutate} openItem={openItem} />;
       case "actions": return <ActionBoard data={data} mutate={mutate} openItem={openItem} newItem={newItem} />;
       case "waiting": return <Waiting data={data} mutate={mutate} openItem={openItem} go={go} />;
       case "kpis": return <KpiPage data={data} mutate={mutate} auth={auth} />;
-      case "projects": return <Projects data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={projDetail} setDetail={setProjDetail} />;
-      case "mobs": return <Mobilisations data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={mobDetail} setDetail={setMobDetail} />;
+      case "projects": return <Projects data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={projDetail} setDetail={setProjDetail} back={() => go("portfolio")} startNew={startNew === "project"} clearNew={() => setStartNew("")} />;
+      case "mobs": return <Mobilisations data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={mobDetail} setDetail={setMobDetail} back={() => go("portfolio")} startNew={startNew === "mob"} clearNew={() => setStartNew("")} />;
       case "risks": return <RisksView data={data} openItem={openItem} newItem={newItem} />;
       case "decisions": return <Decisions data={data} openItem={openItem} newItem={newItem} />;
-      case "portfolio": return <Portfolio data={data} openProject={openProject} openMob={openMob} openItem={openItem} />;
+      case "portfolio": return <Portfolio data={data} openProject={openProject} openMob={openMob} openItem={openItem}
+        newProject={() => { setStartNew("project"); setProjDetail(null); setNav("projects"); }}
+        newMob={() => { setStartNew("mob"); setMobDetail(null); setNav("mobs"); }} />;
       case "contexts": return <Contexts data={data} mutate={mutate} openItem={openItem} openProject={openProject} openMob={openMob} />;
       case "people": return <People data={data} mutate={mutate} openItem={openItem} go={go} />;
       case "meetings": return <Meetings data={data} mutate={mutate} openItem={openItem} />;
       case "okrs": return <Okrs data={data} mutate={mutate} openProject={openProject} />;
-      case "country": return <CountryView data={data} openItem={openItem} setNav={setNav} setProjDetail={setProjDetail} />;
       case "board": case "coo": return <ReportWorkspace data={data} mutate={mutate} />;
       case "newsletter": return <Newsletter data={data} mutate={mutate} />;
       case "weekly": return <WeeklyReview data={data} mutate={mutate} go={go} />;
@@ -3529,7 +3374,7 @@ export default function App({ auth }) {
       <div className="main">
         <div className="topbar">
           <button className="burger" onClick={() => setNavOpen(true)} aria-label="Open menu">☰</button>
-          <span className="ttl">{nav === "assistant" ? "Assistant" : (NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
+          <span className="ttl">{nav === "assistant" ? "Assistant" : nav === "projects" ? "Projects" : nav === "mobs" ? "Mobilisations" : (NAV.flatMap(([, i]) => i).find(([k]) => k === nav) || [])[1] || ""}</span>
           <SearchBox data={data} openItem={openItem} go={go} setProjDetail={setProjDetail} setMobDetail={setMobDetail} />
           {canEdit && <button className="btn sm pri" onClick={() => newItem()}>+ New</button>}
           {!canEdit && <span className="chip" title="Only the administrator can make changes">View only</span>}

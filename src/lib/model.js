@@ -49,6 +49,10 @@ export const RAGS = ["Red", "Amber", "Green"];
    whole point — "Spain Ryanair supply review" is Spain AND Ryanair AND
    Supply without being filed three times. */
 export const CONTEXT_TYPES = ["Geography", "Function", "Client", "Supplier", "Other"];
+/* This is now the ONLY way work is classified. It absorbed three older
+   fields — country, workstream and client — which between them meant the
+   same value ("Supply", "Group Operations") appeared in two different
+   dropdowns and nothing could belong to two places at once. */
 export const SEED_CONTEXTS = [
   { name: "UK Operations", type: "Geography" },
   { name: "Spain", type: "Geography" },
@@ -56,22 +60,32 @@ export const SEED_CONTEXTS = [
   { name: "Greece & Cyprus", type: "Geography" },
   { name: "Europe Operations", type: "Geography" },
   { name: "Group Operations", type: "Function" },
-  { name: "Supply", type: "Function" },
+  { name: "Operations", type: "Function" },
   { name: "Service Delivery", type: "Function" },
+  { name: "Training & Quality", type: "Function" },
+  { name: "Business Change", type: "Function" },
+  { name: "Mobilisations", type: "Function" },
+  { name: "Commercial", type: "Function" },
+  { name: "People", type: "Function" },
+  { name: "Supply", type: "Function" },
+  { name: "Technology", type: "Function" },
+  { name: "Reporting", type: "Function" },
 ];
-/* The single-value country field becomes a context tag. "Group" meant
-   "all of it", which is the absence of a geography rather than one more. */
-export const COUNTRY_TO_CONTEXT = {
+/* The retired single-value country field. "Group" meant "all of it", which
+   is the absence of a geography rather than one more. */
+const COUNTRY_TO_CONTEXT = {
   UK: "UK Operations", Spain: "Spain", Portugal: "Portugal",
   Greece: "Greece & Cyprus", Group: "",
 };
-export const COUNTRIES = ["UK", "Spain", "Portugal", "Greece", "Group"];
 
 export const TYPES = ["Action", "Task", "Milestone", "Risk", "Issue", "Dependency", "Decision", "Commitment", "Chaser", "Follow-up", "Idea", "Improvement", "Information request", "Meeting action", "Mobilisation action", "Board action", "Audit action"];
 export const CORE_TYPES = ["Action", "Risk", "Issue", "Dependency", "Decision", "Commitment", "Idea"];
 
-export const WORKSTREAMS = ["Group Operations", "Operations", "Training & Quality", "Business Change", "Mobilisations", "Commercial", "People", "Supply", "Technology", "Reporting"];
-export const LEGACY_WORKSTREAMS = {
+/* Retired. Workstream was a second classification list that overlapped the
+   Function contexts on two values outright. Kept only so stored records can
+   be moved onto the context tags of the same name. */
+const WORKSTREAMS = ["Group Operations", "Operations", "Training & Quality", "Business Change", "Mobilisations", "Commercial", "People", "Supply", "Technology", "Reporting"];
+const LEGACY_WORKSTREAMS = {
   "KPI, board & COO reporting": "Reporting", "Country operating reviews": "Reporting",
   "Minicabit performance": "Operations", "Service performance": "Operations",
   "AI supplier call handling": "Technology", "Ops Portal & digitalisation": "Technology",
@@ -108,7 +122,9 @@ export const LEGACY_CONF = {
 
 export const DECISION_STATUSES = ["Required", "Awaiting information", "Decided", "Deferred", "Withdrawn"];
 export const LEGACY_DECISION = { "Draft": "Required", "Submitted": "Awaiting information", "Awaiting Information": "Awaiting information" };
-export const HORIZONS = ["Now", "Next", "Later", "Parked"];
+/* Horizon and rank are gone. Between a P1-P5 priority, a due date and the
+   Focus star there were five separate signals all saying "this matters", and
+   the two that nothing else could see were the ones driving a whole screen. */
 
 /* ---------- people ----------
    Recurring working relationships, not a CRM. Performance and
@@ -282,13 +298,68 @@ export function migrate(d) {
   const ctxByName = {};
   d.contexts.forEach((c) => { ctxByName[c.name] = c.id; });
 
+  /* Any seeded context missing from an older document — the Function tags
+     that workstream is about to become — is added before anything is moved
+     onto it. */
+  SEED_CONTEXTS.forEach((c) => {
+    if (!ctxByName[c.name]) {
+      const id = uid();
+      d.contexts.push({ id, ...c, active: true });
+      ctxByName[c.name] = id;
+      changed = true;
+    }
+  });
+  /* A context created on demand for a value that was free text — a client
+     name typed into the old `client` box. */
+  const contextFor = (name, type) => {
+    const nm = String(name || "").trim();
+    if (!nm) return "";
+    const hit = Object.keys(ctxByName).find((k) => k.toLowerCase() === nm.toLowerCase());
+    if (hit) return ctxByName[hit];
+    const id = uid();
+    d.contexts.push({ id, name: nm, type, active: true });
+    ctxByName[nm] = id;
+    changed = true;
+    return id;
+  };
+  /* Move the three retired classification fields onto context tags, then
+     take the fields away. Nothing is lost: every value becomes a tag of the
+     matching type, and an item that carried all three now carries three
+     tags instead of three half-filled dropdowns. */
+  const absorb = (e) => {
+    if (!Array.isArray(e.contexts)) e.contexts = [];
+    const add = (id) => { if (id && !e.contexts.includes(id)) { e.contexts.push(id); changed = true; } };
+    if (e.country !== undefined) {
+      add(ctxByName[COUNTRY_TO_CONTEXT[e.country]] || "");
+      delete e.country; changed = true;
+    }
+    if (e.workstream !== undefined) {
+      const ws = LEGACY_WORKSTREAMS[e.workstream] || e.workstream;
+      if (WORKSTREAMS.includes(ws)) add(ctxByName[ws]);
+      else if (ws) add(contextFor(ws, "Function"));
+      delete e.workstream; changed = true;
+    }
+    if (e.client !== undefined && e.keepClient !== true) {
+      add(contextFor(e.client, "Client"));
+      delete e.client; changed = true;
+    }
+  };
+
   /* --- work items --- */
   d.workItems.forEach((w) => {
     if (remap(w, "status", LEGACY_STATUS)) changed = true;
-    if (remap(w, "workstream", LEGACY_WORKSTREAMS)) changed = true;
     if (remap(w, "confidentiality", LEGACY_CONF)) changed = true;
     if (remap(w, "priority", LEGACY_PRIORITY)) changed = true;
     if (!PRIORITIES.includes(w.priority)) { w.priority = "P3"; changed = true; }
+
+    /* Horizon said the same thing as priority in different words, so the
+       only value it carried that priority did not is "Parked" — work
+       deliberately set aside. That becomes P5 (Backlog). */
+    if (w.horizon !== undefined) {
+      if (w.horizon === "Parked" && prioRank(w.priority) < 4) w.priority = "P5";
+      delete w.horizon; changed = true;
+    }
+    if (w.rank !== undefined) { delete w.rank; changed = true; }
 
     /* Mode. An item that was recorded as waiting, or that names someone
        it is waiting on, is a Waiting On; everything else is an Action.
@@ -297,11 +368,7 @@ export function migrate(d) {
       w.mode = w.waitingOn ? "Waiting on" : "Action";
       changed = true;
     }
-    if (!Array.isArray(w.contexts)) {
-      const name = COUNTRY_TO_CONTEXT[w.country];
-      w.contexts = name && ctxByName[name] ? [ctxByName[name]] : [];
-      changed = true;
-    }
+    absorb(w);
     if (!Array.isArray(w.subtasks)) { w.subtasks = []; changed = true; }
     if (w.focus === undefined) { w.focus = false; changed = true; }
     if (w.source === undefined) { w.source = null; changed = true; }
@@ -319,23 +386,35 @@ export function migrate(d) {
   });
 
   /* --- projects and mobilisations --- */
-  const tagContext = (e) => {
-    if (!Array.isArray(e.contexts)) {
-      const name = COUNTRY_TO_CONTEXT[e.country];
-      e.contexts = name && ctxByName[name] ? [ctxByName[name]] : [];
-      return true;
-    }
-    return false;
-  };
   d.projects.forEach((p) => {
     if (remap(p, "stage", LEGACY_STAGES)) changed = true;
-    if (remap(p, "workstream", LEGACY_WORKSTREAMS)) changed = true;
-    if (tagContext(p)) changed = true;
+    absorb(p);
   });
   d.mobs.forEach((m) => {
     if (remap(m, "stage", LEGACY_MOB_STAGES)) changed = true;
-    if (tagContext(m)) changed = true;
+    /* A mobilisation keeps its client as a field: it is part of what the
+       mobilisation IS, the way a name is, not a tag applied to it. The
+       matching Client context is attached as well so cross-cutting
+       questions still reach it. */
+    m.keepClient = true;
+    absorb(m);
+    delete m.keepClient;
+    if (m.client) {
+      const cid = contextFor(m.client, "Client");
+      if (cid && !m.contexts.includes(cid)) { m.contexts.push(cid); changed = true; }
+    }
   });
+  /* The default country becomes default context tags for new records. */
+  if (d.settings && d.settings.defaultCountry !== undefined) {
+    const nm = COUNTRY_TO_CONTEXT[d.settings.defaultCountry];
+    d.settings.defaultContexts = nm && ctxByName[nm] ? [ctxByName[nm]] : [];
+    delete d.settings.defaultCountry;
+    changed = true;
+  }
+  if (!Array.isArray(d.settings?.defaultContexts)) {
+    if (d.settings) { d.settings.defaultContexts = []; changed = true; }
+  }
+
   (d.updates || []).forEach((u) => {
     if (remap(u, "confidentiality", LEGACY_CONF)) changed = true;
     if (!u.flags || typeof u.flags !== "object") { u.flags = { board: false, coo: false, news: false }; changed = true; }
@@ -384,7 +463,7 @@ export function migrate(d) {
      feature forward costs a nav entry and a screen nobody opens. */
   if (d.benefits && d.benefits.length === 0) { delete d.benefits; changed = true; }
 
-  if (d.v !== 2) { d.v = 2; changed = true; }
+  if (d.v !== 3) { d.v = 3; changed = true; }
   return { data: d, changed };
 }
 
