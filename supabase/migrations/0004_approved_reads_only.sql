@@ -114,3 +114,23 @@ comment on function public.enforce_cmac_domain() is
 --     as "OK: nobody can insert their own approved profile",
 --   (select count(*) from public.allowed_signups) = 1
 --     as "OK: exactly one address may create an account";
+
+
+-- ---------------------------------------------------------------------------
+-- APPLIED 2026-10-06, with one deviation worth recording.
+--
+-- `drop policy "shared_read_cmac"` would not complete: DROP POLICY needs an
+-- ACCESS EXCLUSIVE lock on the table and never got one, while CREATE POLICY on
+-- the same table succeeded. Rather than leave the permissive old policy in
+-- place — policies are OR'd together, so it would have kept the hole open on
+-- its own — its USING clause was rewritten to the same approval test:
+--
+--   alter policy "shared_read_cmac" on public.shared_workspace
+--     using (exists (select 1 from public.profiles
+--                    where profiles.user_id = auth.uid()
+--                      and profiles.status = 'approved'));
+--
+-- Both SELECT policies now demand an approved profile, so the OR is harmless.
+-- The redundant policy can be dropped whenever the lock is free; nothing
+-- depends on it going.
+-- ---------------------------------------------------------------------------
