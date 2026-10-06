@@ -52,7 +52,13 @@ async function installAiMock(page, state) {
         model: body.model, stop_reason: "end_turn",
         usage: { input_tokens: 500, output_tokens: 120, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
         content: [{ type: "text", text: wantsJson
-          ? JSON.stringify({ records: [{ title: "Chase Dave about the Manchester rota", type: "Action", priority: "High", owner: "Dave" }], questions: [], learnings: ["Dave owns the Manchester rota"], flags: [] })
+          ? JSON.stringify({
+              read: "A one-line note asking for the Manchester rota to be chased.",
+              actions: [], waiting: [{ title: "Manchester rota", description: "", person: "Dave", due: "", priority: "P2", contexts: [], confidence: "high" }],
+              decisions: [], risks: [], dates: [], people: [{ name: "Dave", role: "", why: "Owns the Manchester rota" }],
+              facts: ["Dave owns the Manchester rota"], questions: [], duplicates: [],
+              records: [{ title: "Chase Dave about the Manchester rota", type: "Action", priority: "P2", owner: "Dave" }],
+            })
           : "- A tidied briefing line from the mock." }],
       }) });
   });
@@ -79,8 +85,9 @@ const modalOpen = () => page.locator(".modal").count();
 
 /* ============================================================ */
 sec("A. Every screen renders without error");
-const SCREENS = ["Command Centre", "Capture Inbox", "My Priorities", "Action Board", "Waiting & Chasing",
-  "SLA & KPIs", "Projects", "Mobilisations", "Risks & Issues", "Decisions & Commitments", "Country View",
+const SCREENS = ["Command Centre", "Capture", "My Priorities", "Action Board", "Waiting & Chasing",
+  "Portfolio", "Projects", "Mobilisations", "Goals & OKRs", "SLA & KPIs",
+  "Operational Contexts", "People", "Meetings", "Risks & Issues", "Decisions & Commitments",
   "COO & Board Update", "Newsletter", "Weekly Review", "Archive & History", "Settings & Data"];
 for (const label of SCREENS) {
   await soft(`${label}`, async () => {
@@ -147,11 +154,16 @@ await soft("Type switch reveals the Risk detail block", async () => {
   await page.locator(".modal select.select").first().selectOption("Action");
   return true;
 });
-await soft("Status Waiting reveals the chase-date fields", async () => {
-  await page.locator(".modal select.select").nth(1).selectOption("Waiting");
+await soft("Waiting-on MODE reveals the chase-date fields, independently of status", async () => {
+  await page.locator(".modal select.select").nth(2).selectOption("Waiting on");
   await page.waitForTimeout(300);
   if (!(await page.locator('.modal >> text="Next chase"').count())) throw new Error("chase fields missing");
+  // The point of the split: Blocked and Waiting-on are both true at once.
+  await page.locator(".modal select.select").nth(1).selectOption("Blocked");
+  await page.waitForTimeout(250);
+  if (!(await page.locator('.modal >> text="Next chase"').count())) throw new Error("setting status Blocked wiped the waiting-on mode");
   await page.locator(".modal select.select").nth(1).selectOption("In Progress");
+  await page.locator(".modal select.select").nth(2).selectOption("Action");
   return true;
 });
 await soft("More options reveals the secondary fields", async () => {
@@ -356,22 +368,22 @@ await soft("Restore Balanced", async () => { await setQuality("Balanced"); retur
 /* ============================================================ */
 sec("F. Capture inbox");
 await soft("Quick add creates an inbox note with no AI call", async () => {
-  await go("Capture Inbox");
+  await go("Capture");
   state.calls.length = 0;
   await page.locator("textarea.ta").first().fill("A quick thought to triage later");
-  await page.locator('button:text-is("Quick add as inbox note")').click();
+  await page.locator('button:text-is("Just park it in the inbox")').click();
   await page.waitForTimeout(600);
   if (state.calls.length) throw new Error("made an unnecessary AI call");
   if (!(await page.locator("text=A quick thought to triage later").count())) throw new Error("not added");
   return true;
 });
-await soft("AI parse proposes records", async () => {
+await soft("AI read proposes records", async () => {
   state.calls.length = 0;
   await page.locator("textarea.ta").first().fill("Chase Dave about the Manchester rota.");
-  await page.locator('button:text-is("Propose structured records (AI)")').click();
+  await page.locator('button:text-is("Read this")').click();
   await page.waitForTimeout(2500);
   if (!state.calls.length) throw new Error("no AI call");
-  if (!(await page.locator("text=Proposed records").count())) throw new Error("no proposals rendered");
+  if (!(await page.locator(".pgroup").count())) throw new Error("no proposal groups rendered");
   return "model " + state.calls[0].model;
 });
 await soft("Capture triage uses the standard-tier model, not the dearest", () => {
@@ -379,12 +391,13 @@ await soft("Capture triage uses the standard-tier model, not the dearest", () =>
   if (m !== "claude-sonnet-5") throw new Error("model was " + m);
   return m;
 });
-await soft("Discard all asks before discarding", async () => {
-  await page.locator('button:text-is("Discard all")').click();
+await soft("Discarding a read asks first", async () => {
+  await page.locator('.savebar button:text-is("Discard")').click();
   await page.waitForTimeout(300);
-  if (!(await page.locator("text=/Discard all \\d+ proposed/").count())) throw new Error("no confirm");
+  if (!(await page.locator("text=/Discard this read/").count())) throw new Error("no confirm");
   await page.locator('.modal button:text-is("Yes, continue")').click();
   await page.waitForTimeout(500);
+  if (await page.locator(".pgroup").count()) throw new Error("proposals survived the discard");
   return true;
 });
 

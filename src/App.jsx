@@ -5,6 +5,27 @@ import { supabase } from "./lib/supabase";
 import { fileToCapture, ACCEPT, MAX_FILES } from "./lib/ingest";
 import { MONTHS, ytd, ytdTarget, lastIdx, ragFor, ragYtd, fmtVal } from "./lib/bsc";
 import { QUALITY, DEFAULT_QUALITY, MODELS, modelFor, recordUsage, readMeter, meterTotals, resetMeter, costOf, fmtUsd } from "./lib/ai";
+import { askClaude, streamClaude, parseJsonLoose, setAiQuality } from "./lib/claude";
+import Capture, { blankItem } from "./screens/Capture";
+import Portfolio from "./screens/Portfolio";
+import People from "./screens/People";
+import Contexts from "./screens/Contexts";
+import Okrs from "./screens/Okrs";
+import Meetings from "./screens/Meetings";
+import {
+  Badge, Rag, Stat, F, Empty, useSortable, copyText, downloadFile, toCSV, fmtD,
+  registerAsk, askConfirm, askPrompt, askInfo, useEscape, AskDialog,
+} from "./ui";
+import {
+  STATUSES, OPEN_STATUSES, LEGACY_STATUS, MODES, PRIORITIES, PRIO_LABEL, PRIO_HINT, LEGACY_PRIORITY,
+  RAGS, CONTEXT_TYPES, SEED_CONTEXTS, COUNTRIES, COUNTRY_TO_CONTEXT, TYPES, CORE_TYPES,
+  WORKSTREAMS, LEGACY_WORKSTREAMS, PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
+  MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
+  HORIZONS, RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
+  prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
+  itemAttention, portfolioAttention, okrProgress, okrHealth, migrate,
+  ctxName, ctxNames, ctxByName, personName, personByName, inContext, personLoad,
+} from "./lib/model";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -20,76 +41,8 @@ const C = {
   ink: "#16233A", mut: "#5C6675", amber: "#B45309", green: "#1A7F44",
   redS: "#FD0E33", blue: "#1D5FBF", navySoft: "#1B3050",
 };
-const STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Done","Cancelled"];
-const LEGACY_STATUS = { "Review": "In Progress", "Parked": "Planned" };
-const OPEN_STATUSES = ["Inbox","Planned","In Progress","Waiting","Blocked","Review"];
-const TYPES = ["Action","Task","Milestone","Risk","Issue","Dependency","Decision","Commitment","Chaser","Follow-up","Idea","Improvement","Information request","Meeting action","Mobilisation action","Board action","Audit action"];
-/* The editor offers only the types that actually behave differently; legacy
-   values on existing items remain valid and selectable on those items. */
-const CORE_TYPES = ["Action","Risk","Issue","Dependency","Decision","Commitment","Idea"];
-const PRIORITIES = ["Critical","High","Medium","Low"];
-const RAGS = ["Red","Amber","Green"];
-const COUNTRIES = ["UK","Spain","Portugal","Greece","Group"];
-/* Functions, not initiatives. A specific piece of work — Australia, the
-   Minicabit programme, hotel commission recovery — is a Project or a
-   Mobilisation; this says what KIND of work it is. */
-const WORKSTREAMS = ["Group Operations","Operations","Training & Quality","Business Change","Mobilisations","Commercial","People","Supply","Technology","Reporting"];
-/* Items filed under the old initiative-shaped list keep a sensible home. */
-const LEGACY_WORKSTREAMS = {
-  "KPI, board & COO reporting": "Reporting", "Country operating reviews": "Reporting",
-  "Minicabit performance": "Operations", "Service performance": "Operations",
-  "AI supplier call handling": "Technology", "Ops Portal & digitalisation": "Technology",
-  "Automation & AI": "Technology", "Technology": "Technology",
-  "Supplier transitions": "Supply", "Hotel commission recovery": "Commercial",
-  "Australia mobilisation": "Mobilisations", "Client mobilisations": "Mobilisations",
-  "European T&Q standardisation": "Training & Quality",
-  "Planning team resilience": "People", "Resource planning & org design": "People",
-  "People & capability": "People", "Client delivery": "Operations",
-  "Operational controls": "Group Operations", "Business Change": "Business Change",
-  "Aviation": "Operations", "Rail": "Operations", "Supply": "Supply",
-};
-/* Seven stages, not eleven. Discovery and Definition were both "working out
-   what this is"; Delivery and Implementation were the same thing twice; and
-   Hypercare and BAU Handover belong to a mobilisation's lifecycle, not a
-   project's — they already exist in MOB_STAGES below. */
-const PROJECT_STAGES = ["Idea","Scoping","Planning","Delivery","Closed","On Hold","Cancelled"];
-/* Projects saved under the old list keep their place on the board rather than
-   losing their stage. Nothing live is mapped to a closed state — a stage that
-   meant "still running" still means that. */
-const LEGACY_STAGES = {
-  "Discovery": "Scoping",
-  "Definition": "Scoping",
-  "Implementation": "Delivery",
-  "Hypercare": "Delivery",
-  "BAU Handover": "Delivery",
-};
-const MOB_STAGES = ["Scoping","Preparing & Planning","Ready","Go-live","Hypercare","Closed"];
-const LEGACY_MOB_STAGES = {
-  "Discovery": "Scoping", "Handover from Commercial": "Scoping",
-  "Design": "Preparing & Planning", "Build": "Preparing & Planning",
-  "Readiness": "Ready", "Go-live Approval": "Ready",
-  // Handover is the last live phase, not the end of one — mapping it to
-  // Closed would drop a running mobilisation off the active list.
-  "BAU Handover": "Hypercare",
-  // "On Hold" is no longer a stage — a held mobilisation keeps the stage it
-  // actually reached and is marked blocked instead.
-  "On Hold": "Preparing & Planning",
-};
-const MOB_WORKSTREAMS = ["Scope & governance","Operational design","Systems & access","Data & reporting","Supply & hotels","Transport","Resourcing & training","Finance & billing","Communications","Testing & cutover"];
-/* Most restricted first. "Internal" is the working default — the newsletter
-   draws on Internal and Open, since it circulates inside CMAC. */
-const CONFIDENTIALITY = ["Private","Execs","Internal","Open"];
-const SHAREABLE = ["Internal","Open"];
-const LEGACY_CONF = {
-  "General internal": "Internal", "Restricted": "Execs",
-  "Senior leadership": "Execs", "Board confidential": "Execs",
-  "Client confidential": "Execs", "People confidential": "Private",
-};
-const BENEFIT_TYPES = ["Revenue","Cost saving","Cost avoidance","Time saving","Productivity","Service improvement","Client satisfaction","Risk reduction","Control improvement","Capability improvement","Compliance improvement"];
-const BENEFIT_CONF = ["Confirmed","High confidence","Medium confidence","Indicative","Unverified"];
-const DECISION_STATUSES = ["Required","Awaiting information","Decided","Deferred","Withdrawn"];
-const LEGACY_DECISION = { "Draft": "Required", "Submitted": "Awaiting information", "Awaiting Information": "Awaiting information" };
-const HORIZONS = ["Now","Next","Later","Parked"];
+/* Every list the app offers now lives in src/lib/model.js, together with the
+   rules for moving stored records onto them. See the imports above. */
 const DEFAULT_SETTINGS = {
   userName: "Group Operations Director",
   defaultCountry: "Group",
@@ -103,7 +56,6 @@ const DEFAULT_SETTINGS = {
 const uid = () => Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 8);
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const dOff = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
-const fmtD = (s) => { if (!s) return "—"; const p = String(s).slice(0,10).split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
 const daysUntil = (s) => { if (!s) return null; return Math.round((new Date(String(s).slice(0,10)) - new Date(todayISO())) / 86400000); };
 const daysSince = (s) => { if (!s) return null; return Math.round((new Date(todayISO()) - new Date(String(s).slice(0,10))) / 86400000); };
 const monthName = () => new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
@@ -114,8 +66,7 @@ const emailToName = (em) => (String(em || "").split("@")[0].split(/[._-]+/).filt
 const meName = (d) => d.settings.displayName || "Me";
 const isMine = (d, w) => w.owner === meName(d) || w.owner === "Me";
 
-/* ---------- priority ---------- */
-const prioRank = (p) => ({ Critical: 0, High: 1, Medium: 2, Low: 3, Parked: 4 }[p] ?? 5);
+/* prioRank, and every other derived value, come from src/lib/model.js */
 
 /* ---------- storage adapter ----------
    The `store` object is imported from src/lib/store.js. It persists to
@@ -123,174 +74,7 @@ const prioRank = (p) => ({ Critical: 0, High: 1, Medium: 2, Low: 3, Parked: 4 }[
    and falls back to localStorage otherwise. Same async interface:
    store.available, store.load(), store.save(data). */
 
-/* ---------- AI helper (via the /api/ai server proxy) ---------- */
-/* Forgiving JSON extraction for model output: strips fences and prose,
-   fixes trailing commas and stray control characters, and — if the reply was
-   cut off mid-structure — drops the dangling element and closes the brackets
-   so every complete record still comes through. */
-function parseJsonLoose(text) {
-  let s = String(text || "").replace(/```json|```/g, "").trim();
-  const firstObj = s.indexOf("{"), firstArr = s.indexOf("[");
-  const from = firstObj === -1 ? firstArr : firstArr === -1 ? firstObj : Math.min(firstObj, firstArr);
-  if (from === -1) throw new Error("The AI reply contained no JSON.");
-  s = s.slice(from);
-  const lastClose = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
-  if (lastClose !== -1) s = s.slice(0, lastClose + 1);
-  const deComma = (x) => x.replace(/,\s*([}\]])/g, "$1");
-  const deCtrl = (x) => x.replace(/[\u0000-\u001f]+/g, " ");
-  const attempts = [s, deComma(s), deComma(deCtrl(s))];
-  // Truncation repair: scan outside strings, find the last completed element,
-  // cut there and close whatever brackets remain open.
-  const scan = (str) => {
-    const stack = []; let inStr = false, esc = false, lastSafe = 0;
-    for (let i = 0; i < str.length; i++) {
-      const ch = str[i];
-      if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
-      if (ch === '"') inStr = true;
-      else if (ch === "{") stack.push("}");
-      else if (ch === "[") stack.push("]");
-      else if (ch === "}" || ch === "]") { stack.pop(); lastSafe = i + 1; }
-    }
-    return { open: stack.length > 0, lastSafe };
-  };
-  const info = scan(s);
-  if (info.open && info.lastSafe > 0) {
-    const cut = s.slice(0, info.lastSafe).replace(/,\s*$/, "");
-    const st = []; let inS = false, e = false;
-    for (const ch of cut) {
-      if (inS) { if (e) e = false; else if (ch === "\\") e = true; else if (ch === '"') inS = false; continue; }
-      if (ch === '"') inS = true;
-      else if (ch === "{") st.push("}");
-      else if (ch === "[") st.push("]");
-      else if (ch === "}" || ch === "]") st.pop();
-    }
-    const closed = cut + st.reverse().join("");
-    attempts.push(closed, deComma(deCtrl(closed)));
-  }
-  let lastErr;
-  for (const a of attempts) { try { return JSON.parse(a); } catch (err) { lastErr = err; } }
-  throw new Error("The AI reply was not valid JSON (" + (lastErr?.message || "parse failed") + ") — try again, or split very large dumps.");
-}
-
-/* The production AI proxy requires a signed-in user — attach the caller's
-   Supabase session token to every AI request. */
-async function aiHeaders() {
-  const h = { "Content-Type": "application/json" };
-  try {
-    if (supabase) {
-      const { data } = await supabase.auth.getSession();
-      if (data?.session?.access_token) h.Authorization = "Bearer " + data.session.access_token;
-    }
-  } catch (e) { /* local mode / no session */ }
-  return h;
-}
-
-/* Which models this workspace is set to use. The AI helpers are module-level
-   while the setting lives in the document, so App keeps this in step. */
-let _aiQuality = DEFAULT_QUALITY;
-function setAiQuality(q) { _aiQuality = QUALITY[q] ? q : DEFAULT_QUALITY; }
-
-/**
- * One-shot (non-streaming) request. `job` sizes the work so the right model
- * answers it: "light" for mechanical rewriting, "standard" for questions and
- * triage, "deep" for judgement calls that reach the board.
- */
-async function askClaude(prompt, expectJson = false, maxTokens = 1000, job = "standard") {
-  const model = modelFor(_aiQuality, job);
-  const call = async (mt) => {
-    const res = await fetch("/api/ai", {
-      method: "POST",
-      headers: await aiHeaders(),
-      body: JSON.stringify({ model, max_tokens: mt, messages: [{ role: "user", content: prompt }] }),
-    });
-    if (!res.ok) {
-      let detail = "";
-      try { detail = (await res.json()).error || ""; } catch (e) {}
-      throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
-    }
-    const d = await res.json();
-    if (d.error) throw new Error(typeof d.error === "string" ? d.error : (d.error.message || "AI error"));
-    recordUsage(d.model || model, d.usage);
-    return d;
-  };
-  let d = await call(maxTokens);
-  // If the answer hit the token ceiling mid-JSON, retry once with headroom.
-  if (expectJson && d.stop_reason === "max_tokens" && maxTokens < 12000) d = await call(Math.min(maxTokens * 2, 12000));
-  const text = (d.content || []).map((c) => (c.type === "text" ? c.text : "")).join("");
-  if (!expectJson) return text;
-  return parseJsonLoose(text);
-}
-
-/**
- * Streaming Claude call for the live assistant. Sends {system, messages,
- * tools} to /api/ai with stream:true and parses the SSE stream, invoking
- * onDelta(textSoFar) as tokens arrive. Returns the final assistant content
- * blocks (text + tool_use) and the stop reason.
- */
-async function streamClaude({ system, messages, tools, maxTokens = 1600, onDelta, job = "standard" }) {
-  const model = modelFor(_aiQuality, job);
-  // Mark the workspace brief as cacheable. It is the largest and most-repeated
-  // part of every assistant request, so caching it turns a multi-round reply
-  // from "re-bill the whole brief each round" into one write and cheap reads.
-  const sys = system ? [{ type: "text", text: String(system), cache_control: { type: "ephemeral" } }] : undefined;
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: await aiHeaders(),
-    body: JSON.stringify({ stream: true, model, system: sys, messages, tools, max_tokens: maxTokens }),
-  });
-  if (!res.ok || !res.body) {
-    let detail = "";
-    try { detail = (await res.json()).error || ""; } catch (e) {}
-    throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
-  }
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  const content = [];
-  const jsonAcc = {};
-  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-  let stop = null;
-  const textSoFar = () => content.filter((c) => c && c.type === "text").map((c) => c.text).join("");
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
-      const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
-      if (!dataLine) continue;
-      let ev;
-      try { ev = JSON.parse(dataLine.slice(5).trim()); } catch (e) { continue; }
-      if (ev.type === "content_block_start") {
-        const b = ev.content_block || {};
-        content[ev.index] = b.type === "text" ? { type: "text", text: b.text || "" } : { type: "tool_use", id: b.id, name: b.name, input: b.input || {} };
-        jsonAcc[ev.index] = "";
-      } else if (ev.type === "content_block_delta") {
-        const c = content[ev.index];
-        if (!c) continue;
-        if (ev.delta?.type === "text_delta") { c.text += ev.delta.text; if (onDelta) onDelta(textSoFar()); }
-        else if (ev.delta?.type === "input_json_delta") jsonAcc[ev.index] += ev.delta.partial_json || "";
-      } else if (ev.type === "content_block_stop") {
-        const c = content[ev.index];
-        if (c && c.type === "tool_use" && jsonAcc[ev.index]) {
-          try { c.input = JSON.parse(jsonAcc[ev.index]); } catch (e) { c.input = c.input || {}; }
-        }
-      } else if (ev.type === "message_start") {
-        // Input and cache counts arrive here; output totals arrive at the end.
-        const u = ev.message?.usage;
-        if (u) { usage.input_tokens = u.input_tokens || 0; usage.cache_creation_input_tokens = u.cache_creation_input_tokens || 0; usage.cache_read_input_tokens = u.cache_read_input_tokens || 0; }
-      } else if (ev.type === "message_delta") {
-        stop = ev.delta?.stop_reason || stop;
-        if (ev.usage?.output_tokens != null) usage.output_tokens = ev.usage.output_tokens;
-      } else if (ev.type === "error") {
-        throw new Error(ev.error?.message || "AI stream error");
-      }
-    }
-  }
-  recordUsage(model, usage);
-  return { content: content.filter(Boolean), stop_reason: stop };
-}
+/* askClaude, streamClaude and parseJsonLoose live in src/lib/claude.js */
 
 /* Append AI-learned notes to the standing context, skipping near-duplicates. */
 function appendLearned(d, notes) {
@@ -329,7 +113,9 @@ ${text}`;
 /* ---------- demonstration data ---------- */
 function seedData() {
   return {
-    v: 1, workItems: [], projects: [], mobs: [], updates: [], benefits: [], lessons: [], meetings: [],
+    v: 2, workItems: [], projects: [], mobs: [], updates: [], lessons: [], meetings: [],
+    contexts: SEED_CONTEXTS.map((c) => ({ id: uid(), ...c, active: true })),
+    people: [], okrs: [], sources: [],
     stakeholderNotes: {}, dismissedAlerts: [],
     context: { org: "", people: "", clients: "", rules: "", learned: "" },
     kpi: { year: new Date().getFullYear(), updated: "", entities: [] },
@@ -344,14 +130,14 @@ function seedData() {
 
 /* one-time cleanup: remove any demonstration records left in stored data */
 function stripDemo(d) {
-  const keys = ["workItems", "projects", "mobs", "updates", "benefits", "lessons", "meetings"];
+  const keys = ["workItems", "projects", "mobs", "updates", "lessons", "meetings"];
   const had = keys.some((k) => (d[k] || []).some((x) => x && x.demo));
   if (!had) return { data: d, changed: false };
   keys.forEach((k) => { d[k] = (d[k] || []).filter((x) => !(x && x.demo)); });
   d.workItems.push({
     id: uid(), title: "Snag list — app improvement ideas",
     description: "Every time this app jars, is missing something, or does too much — add a note to this item. Bring the whole list to Claude in one batch session; far cheaper than one tweak at a time.",
-    type: "Idea", status: "Inbox", priority: "Low", owner: "Me", waitingOn: "",
+    type: "Idea", status: "Inbox", priority: "P4", owner: "Me", waitingOn: "",
     project: "", mob: "", workstream: "", country: (d.settings && d.settings.defaultCountry) || "UK", client: "",
     due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
     rag: "", nextAction: "Add snags as you find them", blocker: "", horizon: "Later", rank: 90,
@@ -447,6 +233,115 @@ const STYLES = `
 .notebox { background:#F2F6FD; border:1px solid #C9D7EF; border-left:4px solid #1D5FBF; border-radius:10px; padding:9px 13px; font-size:12px; color:#173E7E; margin-bottom:10px; }
 .okbox { background:#F0F8F2; border:1px solid #BFE0C8; border-left:4px solid #1A7F44; border-radius:10px; padding:9px 13px; font-size:12px; color:#0F5C2E; margin-bottom:10px; }
 .empty { padding:24px; text-align:center; color:#5C6675; background:#fff; border:1.5px dashed #C7CFD8; border-radius:12px; font-size:12.5px; }
+.kcol.done { background:#EAF1EB; border-color:#CFE0D3; }
+.kempty { font-size:10.5px; color:#78828F; padding:8px 4px; line-height:1.5; }
+.kcard.muted { opacity:.62; cursor:pointer; }
+/* Saved views as tabs — the pattern that works on the Notion board: the
+   view is one click away and carries its own count. */
+.viewtabs { display:flex; gap:4px; flex-wrap:wrap; margin:10px 0 4px; border-bottom:1px solid #E1E7EC; padding-bottom:6px; }
+.vtab { display:inline-flex; align-items:center; gap:6px; background:transparent; border:0; border-radius:8px; padding:5px 11px; font-size:12px; font-weight:700; color:#5C6675; cursor:pointer; font-family:inherit; }
+.vtab:hover { background:#E4E9ED; color:#112138; }
+.vtab.on { background:#112138; color:#fff; }
+.vtab span { font-size:10px; font-weight:800; background:rgba(0,0,0,.09); border-radius:999px; padding:0 6px; }
+.vtab.on span { background:rgba(255,255,255,.22); }
+/* A due date reads as a countdown, not a date to subtract in your head. */
+.duechip { font-size:10px; border-radius:999px; padding:0 7px; font-weight:800; border:1px solid transparent; }
+.duechip.bad { background:#FDE7EB; color:#C01030; border-color:#F6C9D2; }
+.duechip.warn { background:#FEF3E2; color:#8A5205; border-color:#F7DFBC; }
+.duechip.ok { background:#F5F7F8; color:#5C6675; border-color:#DCE3E8; }
+.chip.wait { background:#FEF3E2; border-color:#F7DFBC; color:#8A5205; }
+.chip.ctx { background:#ECF2FB; border-color:#D3E0F4; color:#1D5FBF; }
+.focusdot { margin-left:auto; cursor:pointer; color:#C7CFD8; font-size:13px; line-height:1; }
+.focusdot:hover { color:#B45309; }
+.focusdot.on { color:#E8A317; }
+/* ---------- Portfolio ---------- */
+.pfrow { display:flex; gap:14px; align-items:center; background:#fff; border:1px solid #E1E7EC; border-left-width:4px; border-radius:12px; padding:11px 14px; margin-bottom:7px; cursor:pointer; }
+.pfrow:hover { border-color:#112138; border-left-color:inherit; }
+.pfrow.red { border-left-color:#FD0E33; } .pfrow.amber { border-left-color:#B45309; } .pfrow.green { border-left-color:#1A7F44; }
+.pfmain { flex:1; min-width:0; }
+.pftop { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+.pfname { font-weight:800; color:#112138; font-size:13px; }
+.pfwhy { font-size:11.5px; color:#5C6675; margin-top:3px; }
+.pfnums { display:flex; gap:16px; text-align:right; flex:none; }
+.pfnums div { min-width:54px; }
+.pfnums b { display:block; font-size:14px; font-weight:800; color:#112138; line-height:1.2; }
+.pfnums .bad b { color:#FD0E33; }
+.pfnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
+.chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
+.chip.overdue { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; font-weight:700; }
+@media (max-width: 760px) { .pfrow { flex-direction:column; align-items:stretch; } .pfnums { justify-content:space-between; text-align:left; } }
+
+/* ---------- People ---------- */
+.peoplegrid { display:grid; gap:9px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); }
+.personcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:12px 14px; cursor:pointer; }
+.personcard:hover { border-color:#112138; }
+.personcard.hot { border-left:4px solid #FD0E33; }
+.personcard .pname { font-weight:800; font-size:13.5px; color:#112138; }
+.personcard .prole { font-size:11px; color:#5C6675; margin-bottom:7px; }
+.pstats { display:flex; flex-direction:column; gap:2px; font-size:11.5px; color:#5C6675; }
+.pstats b { color:#112138; font-weight:800; }
+.pstats .bad, .pstats .bad b { color:#FD0E33; }
+.pstats .warn, .pstats .warn b { color:#B45309; }
+.p1to1 { font-size:10.5px; color:#78828F; margin-top:7px; border-top:1px solid #EDEFF2; padding-top:6px; }
+
+/* ---------- Contexts ---------- */
+.ctxgrid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); }
+.ctxcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:11px 13px; cursor:pointer; }
+.ctxcard:hover { border-color:#1D5FBF; }
+.ctxcard.off { opacity:.5; }
+.ctxcard .cname { font-weight:800; color:#112138; font-size:13px; }
+.ctxcard .ccount { font-size:10.5px; color:#78828F; margin-top:2px; }
+
+/* ---------- Goals and OKRs ---------- */
+.okrcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:13px 15px; margin-bottom:8px; cursor:pointer; }
+.okrcard:hover { border-color:#112138; }
+.okrtop { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+.okrobj { font-weight:800; color:#112138; font-size:13.5px; }
+.okrmeasure { font-size:11.5px; color:#5C6675; margin:3px 0 8px; }
+.okrbar { height:7px; background:#E4E9ED; border-radius:999px; overflow:hidden; margin-bottom:9px; }
+.okrbar span { display:block; height:100%; border-radius:999px; background:#1A7F44; }
+.okrbar span.a { background:#B45309; } .okrbar span.r { background:#FD0E33; }
+.okrnums { display:flex; gap:20px; flex-wrap:wrap; }
+.okrnums b { display:block; font-size:13px; font-weight:800; color:#112138; line-height:1.2; }
+.okrnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
+.okrnote { font-size:11.5px; color:#5C6675; margin-top:9px; border-top:1px solid #EDEFF2; padding-top:7px; }
+.chip.h-ontrack { background:#E7F3EA; border-color:#C6E2CD; color:#1A7F44; }
+.chip.h-atrisk { background:#FEF3E2; border-color:#F7DFBC; color:#8A5205; }
+.chip.h-offtrack { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
+
+/* ---------- Calendar ---------- */
+.calgrid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+.caldow { font-size:9px; text-transform:uppercase; letter-spacing:1.3px; font-weight:800; color:#78828F; padding:4px 6px; }
+.calcell { background:#fff; border:1px solid #E1E7EC; border-radius:8px; min-height:78px; padding:5px 6px; }
+.calcell.empty { background:transparent; border-color:transparent; }
+.calcell.today { border-color:#112138; border-width:2px; }
+.caldate { font-size:10.5px; font-weight:800; color:#78828F; margin-bottom:3px; }
+.calev { font-size:10px; background:#EEF2F5; border-left:3px solid #1D5FBF; border-radius:3px; padding:2px 5px; margin-bottom:2px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.calev:hover { background:#E1E8EE; }
+.calev.unproc { border-left-color:#B45309; background:#FEF6EA; }
+.calmore { font-size:9.5px; color:#78828F; }
+@media (max-width: 700px) { .calcell { min-height:56px; } .calev { font-size:8.5px; } }
+
+/* ---------- Capture ---------- */
+.readcard { background:#112138; color:#E7ECF2; border-radius:12px; padding:13px 16px; margin-top:10px; font-size:12.5px; line-height:1.55; }
+.readcard .flab { color:#9FB0C8; }
+.pgroup { margin-top:12px; }
+.pghead { display:flex; gap:8px; align-items:center; cursor:pointer; padding:5px 0; border-bottom:1px solid #E1E7EC; margin-bottom:6px; }
+.pgtitle { font-size:10.5px; font-weight:900; color:#FD0E33; text-transform:uppercase; letter-spacing:1.6px; margin-right:auto; }
+.pgchev { font-size:9px; color:#78828F; }
+.prow { display:flex; gap:9px; align-items:flex-start; background:#fff; border:1px solid #E1E7EC; border-radius:10px; padding:8px 11px; margin-bottom:5px; opacity:.6; }
+.prow.on { opacity:1; border-color:#C7CFD8; }
+.prow input[type=checkbox] { margin-top:7px; flex:none; }
+.minirow { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-top:5px; }
+.minirow .input.sm, .minirow .select.sm { width:auto; min-width:92px; padding:2px 7px; font-size:11px; }
+.savebar { position:sticky; bottom:0; background:linear-gradient(to top,#EDF1F2 65%,rgba(237,241,242,0)); padding:12px 0 6px; display:flex; gap:8px; margin-top:10px; }
+.emptyst { background:#fff; border:1px dashed #C7CFD8; border-radius:12px; padding:18px 16px; font-size:12.5px; color:#5C6675; text-align:center; }
+
+.ctxpick { display:flex; flex-wrap:wrap; gap:6px; }
+.ctxtag { display:inline-flex; align-items:baseline; gap:6px; background:#fff; border:1.5px solid #DCE3E8; border-radius:999px; padding:3px 11px; font-size:11.5px; font-weight:700; color:#5C6675; cursor:pointer; font-family:inherit; }
+.ctxtag:hover { border-color:#1D5FBF; color:#112138; }
+.ctxtag.on { background:#1D5FBF; border-color:#1D5FBF; color:#fff; }
+.ctxtag i { font-style:normal; font-size:9px; text-transform:uppercase; letter-spacing:.8px; opacity:.6; font-weight:800; }
 .toolrow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
 .toolrow .select, .toolrow .input { width:auto; min-width:120px; }
 .mono { font-family:Consolas,'SF Mono',monospace; font-size:11px; color:#5C6675; }
@@ -521,62 +416,8 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 @media (max-width: 480px) { .frow { grid-template-columns:1fr; } .grid:has(.stat) { grid-template-columns:repeat(2,1fr) !important; } }
 `;
 
-const Badge = ({ p }) => {
-  const cls = p === "Critical" ? "bg-crit" : p === "High" ? "bg-high" : p === "Medium" ? "bg-med" : p === "Low" ? "bg-low" : "bg-park";
-  return <span className={"badge " + cls}>{p}</span>;
-};
-const Rag = ({ v }) => <span className={"rag " + (v === "Red" ? "R" : v === "Amber" ? "A" : v === "Green" ? "G" : "N")} title={v || "No RAG"} />;
-const Stat = ({ n, l, tone, onClick }) => (
-  <div className="stat" onClick={onClick} role="button" tabIndex={0}
-    onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && onClick) { e.preventDefault(); onClick(); } }}>
-    <div className={"n" + (tone ? " " + tone : "")}>{n}</div>
-    <div className="l">{l}</div>
-  </div>
-);
-const F = ({ label, children, span }) => (
-  <div style={span ? { gridColumn: "1 / -1" } : null}>
-    <label className="flab">{label}</label>
-    {children}
-  </div>
-);
 
-function useSortable(rows, initKey) {
-  const [sort, setSort] = useState({ key: initKey, dir: 1 });
-  const sorted = useMemo(() => {
-    const r = [...rows];
-    r.sort((a, b) => {
-      const va = a[sort.key] ?? "", vb = b[sort.key] ?? "";
-      if (va === vb) return 0;
-      if (va === "" || va === null) return 1;
-      if (vb === "" || vb === null) return -1;
-      return (va > vb ? 1 : -1) * sort.dir;
-    });
-    return r;
-  }, [rows, sort]);
-  const th = (key, label) => (
-    <th onClick={() => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))}>
-      {label}{sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
-    </th>
-  );
-  return [sorted, th];
-}
 
-function copyText(t) {
-  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
-  const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
-  try { document.execCommand("copy"); } catch (e) {}
-  document.body.removeChild(ta);
-  return Promise.resolve();
-}
-function downloadFile(name, text, type) {
-  const blob = new Blob([text], { type: type || "text/plain" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-}
-function toCSV(rows, cols) {
-  const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  return [cols.map((c) => esc(c[0])).join(",")].concat(rows.map((r) => cols.map((c) => esc(typeof c[1] === "function" ? c[1](r) : r[c[1]])).join(","))).join("\n");
-}
 
 /* helpers over data */
 const projName = (d, id) => (d.projects.find((p) => p.id === id) || {}).name || "";
@@ -588,7 +429,7 @@ const isOverdue = (w) => OPEN_STATUSES.includes(w.status) && w.due && daysUntil(
 function projectHealth(d, p) {
   const items = d.workItems.filter((w) => w.project === p.id);
   const overdue = items.filter(isOverdue).length;
-  const critRisks = items.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.extra?.rating === "Critical" || w.priority === "Critical")).length;
+  const critRisks = items.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.extra?.rating === "Critical" || w.priority === "P1")).length;
   const decis = items.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).length;
   const stale = daysSince(p.updatedAt) > (d.settings.staleProject || 21);
   let score = 0;
@@ -613,12 +454,12 @@ function computeAlerts(d) {
   const push = (sev, text, nav, id) => A.push({ key: text, sev, text, nav, id });
   d.workItems.filter((w) => OPEN_STATUSES.includes(w.status)).forEach((w) => {
     const du = daysUntil(w.due);
-    if (du !== null && du < 0) push(w.priority === "Critical" ? 3 : 2, `Overdue ${Math.abs(du)}d — ${w.title}`, "item", w.id);
-    else if (du !== null && du <= 3 && ["Critical", "High"].includes(w.priority)) push(2, `${w.priority} due in ${du}d — ${w.title}`, "item", w.id);
-    if (w.status === "Blocked") push(w.priority === "Critical" ? 3 : 2, `Blocked — ${w.title}${w.blocker ? " (" + w.blocker + ")" : ""}`, "item", w.id);
-    if (w.status === "Waiting") { const nc = daysUntil(w.nextChase); if (w.nextChase && nc <= 0) push(2, `Chase due — ${w.title} (waiting on ${w.waitingOn || "unassigned"})`, "item", w.id); if (!w.nextChase) push(1, `Waiting with no chase date — ${w.title}`, "item", w.id); }
+    if (du !== null && du < 0) push(w.priority === "P1" ? 3 : 2, `Overdue ${Math.abs(du)}d — ${w.title}`, "item", w.id);
+    else if (du !== null && du <= 3 && ["P1", "P2"].includes(w.priority)) push(2, `${w.priority} due in ${du}d — ${w.title}`, "item", w.id);
+    if (w.status === "Blocked") push(w.priority === "P1" ? 3 : 2, `Blocked — ${w.title}${w.blocker ? " (" + w.blocker + ")" : ""}`, "item", w.id);
+    if (isWaiting(w)) { const nc = daysUntil(w.nextChase); if (w.nextChase && nc <= 0) push(2, `Chase due — ${w.title} (waiting on ${w.waitingOn || "unassigned"})`, "item", w.id); if (!w.nextChase) push(1, `Waiting with no chase date — ${w.title}`, "item", w.id); }
     if (daysSince(w.updatedAt) > s.staleItem) push(1, `Not updated for ${daysSince(w.updatedAt)}d — ${w.title}`, "item", w.id);
-    if (["Critical", "High"].includes(w.priority) && !w.nextAction) push(1, `No next action — ${w.title}`, "item", w.id);
+    if (["P1", "P2"].includes(w.priority) && !w.nextAction) push(1, `No next action — ${w.title}`, "item", w.id);
     if (w.type === "Decision") { const rb = daysUntil(w.extra?.requiredBy || w.due); if (rb !== null && rb < 0 && w.extra?.decisionStatus !== "Decided") push(3, `Decision beyond required date — ${w.title}`, "item", w.id); }
     if (w.type === "Risk" && !w.extra?.mitigation) push(2, `Risk without mitigation — ${w.title}`, "item", w.id);
     if (w.type === "Issue" && !w.extra?.corrective) push(1, `Issue without corrective action — ${w.title}`, "item", w.id);
@@ -641,72 +482,29 @@ function computeAlerts(d) {
   });
   const inboxOld = d.workItems.filter((w) => w.status === "Inbox" && daysSince(w.created) > 7).length;
   if (inboxOld) push(1, `${inboxOld} inbox item${inboxOld > 1 ? "s" : ""} unprocessed for over 7 days`, "capture");
+  /* Delegation, read per person rather than per item: three overdue asks
+     with one individual is a conversation, not three separate alerts. */
+  (d.people || []).forEach((p) => {
+    const l = personLoad(d, p);
+    if (l.overdue.length >= 2) push(2, `${l.overdue.length} overdue asks with ${p.name}`, "people", p.id);
+    else if (l.overdue.length === 1) push(1, `Overdue with ${p.name} — ${l.overdue[0].title}`, "item", l.overdue[0].id);
+    if (l.stale.length >= 3) push(1, `${l.stale.length} items with ${p.name} have had no update for over a week`, "people", p.id);
+    const nx = daysUntil(p.nextOneToOne);
+    if (nx !== null && nx >= 0 && nx <= 2 && l.waitingOnThem.length) push(1, `1:1 with ${p.name} in ${nx}d — ${l.waitingOnThem.length} open with them`, "people", p.id);
+  });
+  /* Notes taken and never turned into anything are the most common way a
+     commitment made in a meeting quietly disappears. */
+  const unproc = (d.meetings || []).filter((m) => !m.processed && m.notes && daysSince(m.date) >= 2).length;
+  if (unproc) push(2, `${unproc} meeting${unproc > 1 ? "s have" : " has"} notes not yet turned into actions`, "meetings");
+  (d.okrs || []).forEach((o) => {
+    const h = okrHealth(o);
+    if (h === "Off track") push(2, `Goal off track — ${o.objective}`, "okrs", o.id);
+    else if (h === "At risk") push(1, `Goal at risk — ${o.objective}`, "okrs", o.id);
+  });
   const dismissed = new Set((d.dismissedAlerts || []).filter((x) => x.date === todayISO()).map((x) => x.key));
   return A.filter((a) => !dismissed.has(a.key)).sort((a, b) => b.sev - a.sev);
 }
 
-/* ---------- in-app confirm / prompt (native dialogs are blocked in sandboxed frames) ---------- */
-let _askFn = null;
-function registerAsk(fn) { _askFn = fn; }
-function askConfirm(message) {
-  if (_askFn) return _askFn({ kind: "confirm", message });
-  return Promise.resolve(window.confirm(message));
-}
-function askPrompt(message) {
-  if (_askFn) return _askFn({ kind: "prompt", message });
-  return Promise.resolve(window.prompt(message));
-}
-/* One-button notice (replaces native alert(), which sandboxed frames drop). */
-function askInfo(message) {
-  if (_askFn) return _askFn({ kind: "info", message });
-  try { window.alert(message); } catch (e) { /* ignore */ }
-  return Promise.resolve(true);
-}
-/* Escape-to-close for any modal. Open dialogs register on a stack; Escape only
-   ever closes the TOP one, so cancelling a confirm that sits over an edit
-   modal never also discards the modal (and the unsaved work) beneath it. */
-const _escStack = [];
-function useEscape(onClose, active = true) {
-  const ref = useRef(onClose);
-  ref.current = onClose;
-  useEffect(() => {
-    if (!active) return;
-    const entry = {};
-    _escStack.push(entry);
-    const onKey = (e) => {
-      if (e.key !== "Escape") return;
-      if (_escStack[_escStack.length - 1] !== entry) return; // a dialog above us owns Escape
-      ref.current && ref.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      const i = _escStack.indexOf(entry);
-      if (i !== -1) _escStack.splice(i, 1);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [active]);
-}
-function AskDialog({ req, onResolve }) {
-  const [val, setVal] = useState("");
-  useEffect(() => { setVal(""); }, [req]);
-  useEscape(() => onResolve(req.kind === "prompt" ? null : req.kind === "info" ? true : false), !!req);
-  if (!req) return null;
-  const isPrompt = req.kind === "prompt";
-  const isInfo = req.kind === "info";
-  return (
-    <div className="modal-bg" role="dialog" aria-modal="true" style={{ zIndex: 90, alignItems: "center" }} onMouseDown={(e) => { if (e.target === e.currentTarget) onResolve(isPrompt ? null : isInfo ? true : false); }}>
-      <div className="modal narrow" style={{ maxWidth: 460 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 12, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{req.message}</div>
-        {isPrompt && <input className="input" autoFocus value={val} onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onResolve(val); }} />}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
-          {!isInfo && <button className="btn" onClick={() => onResolve(isPrompt ? null : false)}>Cancel</button>}
-          <button className="btn pri" autoFocus={!isPrompt} onClick={() => onResolve(isPrompt ? val : true)}>{isPrompt ? "Save" : isInfo ? "OK" : "Yes, continue"}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ============================================================
    Work item modal (create / edit)
@@ -715,23 +513,34 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
   useEscape(onClose);
   const isNew = !item.id;
   const [w, setW] = useState(() => ({
-    id: item.id || uid(), title: "", description: "", type: "Action", status: "Inbox", priority: "Medium",
+    id: item.id || uid(), title: "", description: "", type: "Action", status: "Inbox", priority: "P3",
     owner: meName(data), waitingOn: "", project: "", mob: "", workstream: "", country: data.settings.defaultCountry || "UK",
     client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
     rag: "", nextAction: "", blocker: "", horizon: "Next", rank: 50,
+    mode: "Action", contexts: [], subtasks: [], focus: false, estimate: "", source: null, personId: "",
     flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false },
     confidentiality: "Internal", notes: [], extra: {}, outcome: "", ...JSON.parse(JSON.stringify(item)),
   }));
   const [note, setNote] = useState("");
   const [more, setMore] = useState(false);
+  const [sub, setSub] = useState("");
   const set = (k, v) => setW((x) => ({ ...x, [k]: v }));
   const setX = (k, v) => setW((x) => ({ ...x, extra: { ...x.extra, [k]: v } }));
   const typeOpts = CORE_TYPES.includes(w.type) ? CORE_TYPES : [w.type, ...CORE_TYPES];
+  const toggleCtx = (id) => setW((x) => ({ ...x, contexts: (x.contexts || []).includes(id) ? x.contexts.filter((c) => c !== id) : [...(x.contexts || []), id] }));
+  const addSub = () => { if (!sub.trim()) return; setW((x) => ({ ...x, subtasks: [...(x.subtasks || []), { id: uid(), text: sub.trim(), done: false }] })); setSub(""); };
   const save = () => {
     if (!w.title.trim()) return askInfo("A title is required.");
     const out = { ...w, updatedAt: todayISO() };
     if (note.trim()) out.notes = [...(out.notes || []), { ts: todayISO(), text: note.trim() }];
-    if (out.status === "Done" && !out.completed) out.completed = todayISO();
+    /* Done means archived. The record is kept in full — Archive & History
+       reads it — but it stops occupying the board. */
+    if (out.status === "Done") { if (!out.completed) out.completed = todayISO(); out.archivedAt = out.archivedAt || todayISO(); }
+    else out.archivedAt = "";
+    /* Naming someone you are waiting on IS the waiting-on mode. Letting the
+       two drift apart is how "what am I waiting on from Arif" goes wrong. */
+    if (out.waitingOn && out.mode !== "Waiting on") out.mode = "Waiting on";
+    if (!out.waitingOn && out.mode === "Waiting on") out.mode = "Action";
     onSave(out, isNew);
   };
   return (
@@ -745,9 +554,14 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Title" span><input className="input" value={w.title} autoFocus onChange={(e) => set("title", e.target.value)} placeholder="Short, action-led title" /></F>
           <F label="Type"><select className="select" value={w.type} onChange={(e) => set("type", e.target.value)}>{typeOpts.map((t) => <option key={t}>{t}</option>)}</select></F>
           <F label="Status"><select className="select" value={w.status} onChange={(e) => set("status", e.target.value)}>{STATUSES.map((t) => <option key={t}>{t}</option>)}</select></F>
-          <F label="Manual priority"><select className="select" value={w.priority} onChange={(e) => set("priority", e.target.value)}>{PRIORITIES.map((t) => <option key={t}>{t}</option>)}</select></F>
-          <F label="Owner"><input className="input" value={w.owner} onChange={(e) => set("owner", e.target.value)} /></F>
-          <F label="Waiting on"><input className="input" value={w.waitingOn} onChange={(e) => set("waitingOn", e.target.value)} placeholder="Person / team" /></F>
+          {/* Mode is the second axis: status says where the work has got to,
+              mode says who is holding it. Both are needed to answer
+              "what am I waiting on from Arif" regardless of status. */}
+          <F label="Mode"><select className="select" value={w.mode || "Action"} onChange={(e) => set("mode", e.target.value)}>{MODES.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label="Priority"><select className="select" value={w.priority} onChange={(e) => set("priority", e.target.value)}>{PRIORITIES.map((t) => <option key={t} value={t}>{t} — {PRIO_LABEL[t]}</option>)}</select></F>
+          <F label={w.mode === "Waiting on" ? "Owner (whose work it is)" : "Owner"}><input className="input" list="people-list" value={w.owner} onChange={(e) => set("owner", e.target.value)} /></F>
+          <F label="Waiting on"><input className="input" list="people-list" value={w.waitingOn} onChange={(e) => set("waitingOn", e.target.value)} placeholder="Person / team" /></F>
+          <datalist id="people-list">{data.people.map((p) => <option key={p.id} value={p.name} />)}</datalist>
           <F label="Due date"><input type="date" className="input" value={w.due} onChange={(e) => set("due", e.target.value)} /></F>
           <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></F>
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
@@ -756,25 +570,61 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
           {more && <>
             <F label="Workstream"><select className="select" value={w.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((t) => <option key={t}>{t}</option>)}</select></F>
-            <F label="Country"><select className="select" value={w.country} onChange={(e) => set("country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="Estimate (mins)"><input className="input" type="number" min="0" step="15" value={w.estimate || ""} onChange={(e) => set("estimate", e.target.value)} placeholder="optional" /></F>
             <F label="RAG"><select className="select" value={w.rag} onChange={(e) => set("rag", e.target.value)}><option value="">—</option>{RAGS.map((t) => <option key={t}>{t}</option>)}</select></F>
             <F label="Confidentiality"><select className="select" value={w.confidentiality} onChange={(e) => set("confidentiality", e.target.value)}>{CONFIDENTIALITY.map((t) => <option key={t}>{t}</option>)}</select></F>
             <F label="Client"><input className="input" value={w.client} onChange={(e) => set("client", e.target.value)} /></F>
           </>}
           {(w.status === "Blocked" || w.blocker) && <F label="Blocker / reason" span><input className="input" value={w.blocker} onChange={(e) => set("blocker", e.target.value)} /></F>}
-          {(w.status === "Waiting") && <>
+          {(isWaiting(w)) && <>
             <F label="Last chased"><input type="date" className="input" value={w.lastChased} onChange={(e) => set("lastChased", e.target.value)} /></F>
             <F label="Next chase"><input type="date" className="input" value={w.nextChase} onChange={(e) => set("nextChase", e.target.value)} /></F>
           </>}
           {w.status === "Done" && <F label="Outcome delivered" span><textarea className="ta" value={w.outcome} onChange={(e) => set("outcome", e.target.value)} placeholder="What was actually delivered / the benefit" /></F>}
         </div>
-        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+        {/* Operational contexts. One item, several lenses — a Spain / Ryanair
+            / Supply review is tagged three times and filed once. */}
+        <div className="h2">Operational contexts</div>
+        <div className="ctxpick">
+          {data.contexts.filter((c) => c.active || (w.contexts || []).includes(c.id)).map((c) => (
+            <button key={c.id} type="button" className={"ctxtag" + ((w.contexts || []).includes(c.id) ? " on" : "")} onClick={() => toggleCtx(c.id)}>
+              {c.name}<i>{c.type}</i>
+            </button>))}
+          {!data.contexts.length && <span className="sub" style={{ margin: 0 }}>None set up yet — add them under Operational Contexts.</span>}
+        </div>
+
+        {/* Subtasks: the checklist under a chunky item, which is how most
+            real work actually arrives. */}
+        <div className="h2">Checklist {(w.subtasks || []).length > 0 && <span style={{ color: "#5C6675", fontWeight: 700 }}>· {w.subtasks.filter((s) => s.done).length}/{w.subtasks.length}</span>}</div>
+        {(w.subtasks || []).map((s) => (
+          <div key={s.id} className="checkline">
+            <input type="checkbox" checked={s.done} onChange={() => setW((x) => ({ ...x, subtasks: x.subtasks.map((t) => t.id === s.id ? { ...t, done: !t.done } : t) }))} />
+            <span style={{ flex: 1, textDecoration: s.done ? "line-through" : "none", color: s.done ? "#78828F" : "inherit" }}>{s.text}</span>
+            <span className="linkish" onClick={() => setW((x) => ({ ...x, subtasks: x.subtasks.filter((t) => t.id !== s.id) }))}>remove</span>
+          </div>))}
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input className="input" placeholder="Add a checklist step… (Enter)" value={sub} onChange={(e) => setSub(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSub(); } }} />
+          <button type="button" className="btn sm" onClick={addSub}>Add</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
           <button type="button" className="btn sm" onClick={() => setMore((v) => !v)}>{more ? "Fewer options ▲" : "More options ▼"}</button>
+          <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}>
+            <input type="checkbox" checked={!!w.focus} onChange={(e) => set("focus", e.target.checked)} />
+            ★ Focus — something I intend to move
+          </label>
           <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center" }}>
             <input type="checkbox" checked={!!w.private} onChange={(e) => set("private", e.target.checked)} />
             Private — hidden from view-only users
           </label>
         </div>
+        {/* Provenance: where this record came from. An AI-created item that
+            cannot be traced back to its source is an item you cannot trust. */}
+        {w.source && w.source.label && (
+          <div className="notebox" style={{ marginTop: 10 }}>
+            Created from <b>{w.source.label}</b>{w.source.date ? ` (${fmtD(w.source.date)})` : ""}.
+          </div>)}
 
         {w.type === "Risk" && <>
           <div className="h2">Risk detail</div>
@@ -894,11 +744,14 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const due7 = open.filter((w) => { const d = daysUntil(w.due); return d !== null && d >= 0 && d <= 7; });
   const dueToday = open.filter((w) => daysUntil(w.due) === 0);
   const blocked = open.filter((w) => w.status === "Blocked");
-  const waiting = open.filter((w) => w.status === "Waiting");
+  const waiting = open.filter((w) => isWaiting(w));
   const chaseDue = waiting.filter((w) => !w.nextChase || daysUntil(w.nextChase) <= 0);
   const decisions = open.filter((w) => w.type === "Decision");
   const stale = open.filter((w) => daysSince(w.updatedAt) > data.settings.staleItem);
   const top5 = open.filter((w) => w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 5);
+  const focused = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority));
+  const peopleHot = (data.people || []).filter((p) => personLoad(data, p).overdue.length > 0).length;
+  const toProcess = (data.meetings || []).filter((m) => !m.processed && m.notes).length;
   const doneRecent = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 7);
   const activeProjects = data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage));
   const ragCount = (r) => activeProjects.filter((p) => p.rag === r).length;
@@ -910,7 +763,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
     if (a.nav === "item") { const w = data.workItems.find((x) => x.id === a.id); if (w) openItem(w); }
     else if (a.nav === "project") openProject(a.id);
     else if (a.nav === "mob") openMob(a.id);
-    else if (a.nav === "capture") go("capture");
+    else if (["capture", "people", "meetings", "okrs"].includes(a.nav)) go(a.nav);
   };
   const show = (k) => focus === "All" || focus === k;
   return (
@@ -935,6 +788,24 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
           {alerts.length > 12 && focus === "All" && <div className="sub">{alerts.length - 12} further alerts — use a focus filter above to see all.</div>}
         </div></> : null}
 
+      {/* Focus: the handful of things deliberately chosen to move today.
+          Separate from priority, which says how much something matters —
+          this says what is actually getting attention. */}
+      {show("Today") && focused.length > 0 && <>
+        <div className="h2">★ Focus — what I intend to move</div>
+        {focused.map((w) => {
+          const b = dueBadge(w);
+          return (
+            <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>
+              <Badge p={w.priority} />
+              <span style={{ flex: 1 }}>{w.title}</span>
+              {subtaskProgress(w) && <span className="chip">{subtaskProgress(w).done}/{subtaskProgress(w).total}</span>}
+              {b && <span className={"duechip " + b.tone}>{b.text}</span>}
+              <span className="linkish" onClick={(e) => { e.stopPropagation(); mutate((d) => { const x = d.workItems.find((i) => i.id === w.id); if (x) x.focus = false; return d; }, "Removed from Focus"); }}>clear</span>
+            </div>);
+        })}
+      </>}
+
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", marginTop: 14 }}>
         <Stat n={overdue.length} l="Overdue" tone={overdue.length ? "bad" : ""} onClick={() => go("actions")} />
         <Stat n={dueToday.length} l="Due today" onClick={() => go("actions")} />
@@ -944,6 +815,8 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
         <Stat n={chaseDue.length} l="Due for chase" tone={chaseDue.length ? "warn" : ""} onClick={() => go("waiting")} />
         <Stat n={decisions.length} l="Decisions open" onClick={() => go("decisions")} />
         <Stat n={stale.length} l={"Stale >" + data.settings.staleItem + "d"} tone={stale.length ? "warn" : ""} onClick={() => go("actions")} />
+        <Stat n={peopleHot} l="People to chase" tone={peopleHot ? "warn" : ""} onClick={() => go("people")} />
+        <Stat n={toProcess} l="Meetings to process" tone={toProcess ? "warn" : ""} onClick={() => go("meetings")} />
       </div>
 
       {(() => {
@@ -1036,223 +909,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
 /* ============================================================
    Capture inbox (natural-language + AI parsing + review queue)
    ============================================================ */
-function Capture({ data, mutate, openItem }) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [proposals, setProposals] = useState([]);
-  const [files, setFiles] = useState([]);
-  const [ingesting, setIngesting] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [questions, setQuestions] = useState([]);
-  const [answer, setAnswer] = useState("");
-  const [learnings, setLearnings] = useState([]);
-  const lastInput = useRef("");
-  const fileRef = useRef(null);
-  const inbox = data.workItems.filter((w) => w.status === "Inbox");
-
-  const addFiles = async (fileList) => {
-    const incoming = Array.from(fileList || []);
-    if (!incoming.length) return;
-    setErr(""); setIngesting(true);
-    // Count as we go: `files` is the value captured when this render ran, so
-    // trusting it silently dropped later files in a multi-file selection.
-    let held = files.length;
-    const problems = [];
-    for (const f of incoming) {
-      if (held >= MAX_FILES) { problems.push("Only " + MAX_FILES + " attachments at a time — " + f.name + " was not added."); continue; }
-      // A dropped workbook that matches the Balanced Scorecard template can go
-      // straight into SLA & KPIs instead of through AI capture.
-      if (/\.(xlsx|xlsm)$/i.test(f.name)) {
-        try {
-          const { parseScorecardWorkbook } = await import("./lib/bscParse");
-          const out = parseScorecardWorkbook(await f.arrayBuffer());
-          const ok = await askConfirm(`"${f.name}" looks like the Balanced Scorecard (${out.entities.length} scorecard tab(s)). Import it into SLA & KPIs, replacing the current scorecard numbers? Cancel to attach it here for AI capture instead.`);
-          if (ok) {
-            mutate((d2) => { d2.kpi = { year: new Date().getFullYear(), updated: todayISO(), entities: mergeScorecard(d2.kpi, out.entities), guidance: out.guidance || [] }; return d2; }, "Balanced Scorecard imported via capture: " + f.name);
-            continue;
-          }
-        } catch (e) { /* not a scorecard workbook — treat as a normal attachment */ }
-      }
-      try {
-        const processed = await fileToCapture(f);
-        held += 1;
-        setFiles((fs) => fs.length >= MAX_FILES ? fs : [...fs, { ...processed, _id: uid() }]);
-      } catch (e) { problems.push(String(e.message || e)); }
-    }
-    // Report every file that failed, not just the last one.
-    if (problems.length) setErr(problems.join("  •  "));
-    setIngesting(false);
-  };
-  const onPaste = (e) => {
-    const imgs = Array.from(e.clipboardData?.items || []).filter((i) => i.type.startsWith("image/")).map((i) => i.getAsFile()).filter(Boolean);
-    if (imgs.length) { e.preventDefault(); addFiles(imgs); }
-  };
-
-  const parse = async () => {
-    if (!text.trim() && !files.length) return;
-    setBusy(true); setErr("");
-    try {
-      const attachTexts = files.filter((f) => f.kind === "text").map((f) => `--- Attached file: ${f.name} ---\n${f.text}`).join("\n\n");
-      const combined = [text.trim(), attachTexts].filter(Boolean).join("\n\n") || "(see the attached images/documents)";
-      const blocks = [];
-      files.forEach((f) => {
-        if (f.kind === "image") blocks.push({ type: "image", source: { type: "base64", media_type: f.media_type, data: f.data } });
-        else if (f.kind === "pdf") blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data } });
-      });
-      blocks.push({ type: "text", text: captureParsePrompt(combined, data) });
-      lastInput.current = combined;
-      const out = await askClaude(blocks.length === 1 ? blocks[0].text : blocks, true, 6000);
-      const recs = Array.isArray(out) ? out : (out.records || []);
-      const list = recs.map((p) => ({ ...p, _sel: true, _id: uid() }));
-      if (!list.length) setErr("Nothing extractable was found in that input.");
-      setProposals(list);
-      setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
-      setLearnings(Array.isArray(out) ? [] : (out.learnings || []).slice(0, 4));
-      setAnswer("");
-    } catch (e) { setErr("Could not parse that just now (" + (e.message || "AI error") + "). You can still add it as a quick note below."); }
-    setBusy(false);
-  };
-
-  const refine = async () => {
-    if (!answer.trim()) return;
-    setBusy(true); setErr("");
-    try {
-      const current = proposals.map(({ _sel, _id, ...rest }) => rest);
-      const prompt = captureParsePrompt(lastInput.current || "(input previously provided)", data) +
-        `\n\nYOU PREVIOUSLY PROPOSED THESE RECORDS:\n${JSON.stringify(current)}\n\nYOU ASKED THE USER:\n${JSON.stringify(questions)}\n\nTHE USER ANSWERS:\n${answer.trim()}\n\nUpdate the records using these answers (adjust owners, dates, priorities, projects; add or remove records only if the answers imply it). Respond ONLY with the same JSON object shape — keep "questions" empty unless something important is still genuinely unresolved.`;
-      const out = await askClaude(prompt, true, 6000);
-      const recs = Array.isArray(out) ? out : (out.records || []);
-      if (recs.length) setProposals(recs.map((p) => ({ ...p, _sel: true, _id: uid() })));
-      setQuestions(Array.isArray(out) ? [] : (out.questions || []).slice(0, 3));
-      const learned = Array.isArray(out) ? [] : (out.learnings || []).slice(0, 4);
-      if (learned.length) setLearnings((ls) => [...new Set([...ls, ...learned])].slice(0, 6));
-      setAnswer("");
-    } catch (e) { setErr("Could not apply those answers (" + (e.message || "AI error") + ")."); }
-    setBusy(false);
-  };
-  const quickAdd = () => {
-    if (!text.trim()) return;
-    mutate((d) => {
-      d.workItems.push({ id: uid(), title: text.trim().slice(0, 140), description: text.trim(), type: "Action", status: "Inbox", priority: "Medium", owner: meName(d), waitingOn: "", project: "", mob: "", workstream: "", country: d.settings.defaultCountry,
-        client: "", due: "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: "", blocker: "",
-        horizon: "Next", rank: 50, flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal", notes: [], extra: {}, outcome: "" });
-      return d;
-    }, "Quick-captured to inbox");
-    setText("");
-  };
-  const updateProp = (id, k, v) => setProposals((ps) => ps.map((p) => p._id === id ? { ...p, [k]: v } : p));
-  const approve = (only) => {
-    const chosen = proposals.filter((p) => (only ? p._id === only : p._sel));
-    if (!chosen.length) return;
-    mutate((d) => {
-      chosen.forEach((p) => {
-        const proj = d.projects.find((x) => x.name === p.project);
-        const mob = d.mobs.find((x) => x.name === p.mobilisation);
-        d.workItems.push({ id: uid(), title: p.title || "Untitled", description: p.description || "", type: TYPES.includes(p.type) ? p.type : "Action",
-          status: p.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(p.priority) ? p.priority : "Medium", owner: p.owner || meName(d), waitingOn: p.waitingOn || "",
-          project: proj ? proj.id : "", mob: mob ? mob.id : "", workstream: p.workstream || "", country: COUNTRIES.includes(p.country) ? p.country : d.settings.defaultCountry,
-          client: "", due: p.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(), rag: "", nextAction: p.nextAction || "",
-          blocker: "", horizon: HORIZONS.includes(p.horizon) ? p.horizon : "Next", rank: 50, flags: { board: !!p.flags?.board, coo: !!p.flags?.coo, news: !!p.flags?.news, groupWeekly: false, ukWeekly: false },
-          confidentiality: "Internal",
-          notes: [{ ts: todayISO(), text: "Created from capture (AI-proposed, user-approved)" + (p.reasoning ? " — " + p.reasoning : "") + (p.duplicateOf ? " · Possible duplicate of: " + p.duplicateOf : "") }],
-          extra: {}, outcome: "" });
-      });
-      if (!only && learnings.length) appendLearned(d, learnings);
-      return d;
-    }, `Approved ${chosen.length} captured item(s)` + (!only && learnings.length ? ` · learned ${learnings.length} context note(s)` : ""));
-    setProposals((ps) => ps.filter((p) => (only ? p._id !== only : !p._sel)));
-    if (!only) { setText(""); setFiles([]); setQuestions([]); setAnswer(""); setLearnings([]); }
-  };
-  return (
-    <div>
-      <h2 className="h1">Capture Inbox</h2>
-      <p className="sub">Dump anything here — typed notes, Outlook emails (.msg/.eml), Word, Excel, PDFs, screenshots. Drag files in, paste a screenshot, or attach. Claude reads the lot, triages it against your standing brief (Settings → AI context & triage rules) and checks for duplicates; nothing is saved without your approval.</p>
-      <div className="card" style={dragOver ? { outline: "2px dashed #FD0E33", outlineOffset: -6 } : null}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}>
-        <textarea className="ta" rows={5} value={text} onChange={(e) => setText(e.target.value)} onPaste={onPaste}
-          placeholder={"Type or paste anything here — notes, an email, meeting minutes, a list of actions… or drop files onto this box (emails, Word, Excel, PDFs, screenshots)."} />
-        {files.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-            {files.map((f) => (
-              <span key={f._id} className="chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px" }}>
-                {f.kind === "image" ? "🖼" : f.kind === "pdf" ? "📄" : "📎"} {f.name.length > 34 ? f.name.slice(0, 32) + "…" : f.name}
-                <span className="linkish" style={{ color: "#FD0E33" }} onClick={() => setFiles((fs) => fs.filter((x) => x._id !== f._id))}>✕</span>
-              </span>))}
-          </div>)}
-        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="btn pri" disabled={busy || ingesting || (!text.trim() && !files.length)} onClick={parse}>{busy ? "Analysing…" : "Propose structured records (AI)"}</button>
-          <button className="btn" onClick={() => fileRef.current?.click()} disabled={ingesting}>{ingesting ? "Reading files…" : "📎 Attach files"}</button>
-          <input ref={fileRef} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
-            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-          <button className="btn" disabled={!text.trim()} onClick={quickAdd}>Quick add as inbox note</button>
-          <span className="sub" style={{ margin: 0 }}>AI proposals are never auto-saved.</span>
-        </div>
-        {err && <div className="warnbox" style={{ marginTop: 8 }}>{err}</div>}
-      </div>
-
-      {proposals.length > 0 && <>
-        <div className="h2">Proposed records — review before saving</div>
-        {questions.length > 0 && (
-          <div className="card" style={{ marginBottom: 8, borderLeft: "4px solid #1D5FBF" }}>
-            <div className="flab">The AI has questions before these are final</div>
-            {questions.map((q, i) => <div key={i} style={{ fontSize: 12.5, padding: "2px 0" }}>• {q}</div>)}
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <input className="input" placeholder="Answer here (one line covers all questions)…" value={answer}
-                onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refine()} />
-              <button className="btn pri sm" disabled={busy || !answer.trim()} onClick={refine}>{busy ? "Updating…" : "Answer & update"}</button>
-            </div>
-            <div className="sub" style={{ margin: "6px 0 0" }}>Or ignore the questions and approve below as-is.</div>
-          </div>)}
-        {learnings.length > 0 && (
-          <div className="card" style={{ marginBottom: 8, borderLeft: "4px solid #2E7D32" }}>
-            <div className="flab">New context it will remember when you approve (saved to Settings → AI context)</div>
-            {learnings.map((l, i) => (
-              <div key={i} style={{ fontSize: 12.5, padding: "2px 0", display: "flex", gap: 8, alignItems: "baseline" }}>
-                <span style={{ flex: 1 }}>• {l}</span>
-                <span className="linkish" onClick={() => setLearnings((ls) => ls.filter((_, j) => j !== i))}>don't keep</span>
-              </div>))}
-          </div>)}
-        <div className="notebox">These are AI proposals triaged against your context brief. Check owners and dates: anything not stated has been left blank rather than guessed.</div>
-        {proposals.map((p) => (
-          <div key={p._id} className="card" style={{ marginBottom: 8, borderLeft: "4px solid #112138" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-              <input type="checkbox" checked={p._sel} onChange={(e) => updateProp(p._id, "_sel", e.target.checked)} />
-              <input className="input" style={{ fontWeight: 600 }} value={p.title || ""} onChange={(e) => updateProp(p._id, "title", e.target.value)} />
-            </div>
-            {p.duplicateOf && <div className="warnbox" style={{ marginBottom: 6 }}>Possible duplicate of existing item: <b>{p.duplicateOf}</b> — approve only if this is genuinely new.</div>}
-            {p.reasoning && <div className="sub" style={{ margin: "0 0 6px" }}>Triage: {p.reasoning}</div>}
-            <div className="frow">
-              <F label="Type"><select className="select" value={p.type || "Action"} onChange={(e) => updateProp(p._id, "type", e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
-              <F label="Owner"><input className="input" value={p.owner || ""} onChange={(e) => updateProp(p._id, "owner", e.target.value)} /></F>
-              <F label="Waiting on"><input className="input" value={p.waitingOn || ""} onChange={(e) => updateProp(p._id, "waitingOn", e.target.value)} /></F>
-              <F label="Due"><input type="date" className="input" value={p.due || ""} onChange={(e) => updateProp(p._id, "due", e.target.value)} /></F>
-              <F label="Priority"><select className="select" value={p.priority || "Medium"} onChange={(e) => updateProp(p._id, "priority", e.target.value)}>{PRIORITIES.map((t) => <option key={t}>{t}</option>)}</select></F>
-              <F label="Horizon"><select className="select" value={p.horizon || "Next"} onChange={(e) => updateProp(p._id, "horizon", e.target.value)}>{HORIZONS.map((t) => <option key={t}>{t}</option>)}</select></F>
-              <F label="Project"><select className="select" value={p.project || ""} onChange={(e) => updateProp(p._id, "project", e.target.value)}><option value="">—</option>{data.projects.map((x) => <option key={x.id}>{x.name}</option>)}</select></F>
-              <F label="Mobilisation"><select className="select" value={p.mobilisation || ""} onChange={(e) => updateProp(p._id, "mobilisation", e.target.value)}><option value="">—</option>{data.mobs.map((x) => <option key={x.id}>{x.name}</option>)}</select></F>
-              <F label="Country"><select className="select" value={p.country || ""} onChange={(e) => updateProp(p._id, "country", e.target.value)}><option value="">—</option>{COUNTRIES.map((t) => <option key={t}>{t}</option>)}</select></F>
-              <F label="Next action" span><input className="input" value={p.nextAction || ""} onChange={(e) => updateProp(p._id, "nextAction", e.target.value)} /></F>
-            </div>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <button className="btn sm pri" onClick={() => approve(p._id)}>Approve this</button>
-              <button className="btn sm" onClick={() => setProposals((ps) => ps.filter((x) => x._id !== p._id))}>Discard</button>
-            </div>
-          </div>))}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn pri" onClick={() => approve()}>Approve selected ({proposals.filter((p) => p._sel).length})</button>
-          <button className="btn" onClick={async () => { if (await askConfirm(`Discard all ${proposals.length} proposed record(s)? The AI analysis of this dump will be lost.`)) { setProposals([]); setQuestions([]); setAnswer(""); setLearnings([]); } }}>Discard all</button>
-        </div>
-      </>}
-
-      <div className="h2">Unprocessed inbox ({inbox.length})</div>
-      {inbox.some((w) => daysSince(w.created) > 7) && <div className="warnbox">Some inbox items have sat unprocessed for more than 7 days.</div>}
-      <ItemsTable data={data} rows={inbox} onOpen={openItem} cols={["title", "type", "priority", "due", "updated"]} />
-    </div>
-  );
-}
+/* Capture now lives in src/screens/Capture.jsx */
 
 /* ============================================================
    My Priorities (Now / Next / Later / Parked with drag & drop)
@@ -1270,8 +927,8 @@ function Priorities({ data, mutate, openItem }) {
   }, null);
   const warnings = [];
   if (nowCount > 5) warnings.push(`${nowCount} items are marked "Now" — more than five dilutes focus.`);
-  open.filter((w) => ["Critical", "High"].includes(w.priority) && !w.nextAction).slice(0, 3).forEach((w) => warnings.push(`High-priority item without a next action: ${w.title}`));
-  open.filter((w) => w.status === "Blocked" && ["Critical", "High"].includes(w.priority)).slice(0, 3).forEach((w) => warnings.push(`High-priority item blocked: ${w.title}`));
+  open.filter((w) => ["P1", "P2"].includes(w.priority) && !w.nextAction).slice(0, 3).forEach((w) => warnings.push(`High-priority item without a next action: ${w.title}`));
+  open.filter((w) => w.status === "Blocked" && ["P1", "P2"].includes(w.priority)).slice(0, 3).forEach((w) => warnings.push(`High-priority item blocked: ${w.title}`));
   return (
     <div>
       <h2 className="h1">My Priorities</h2>
@@ -1292,7 +949,7 @@ function Priorities({ data, mutate, openItem }) {
                       {w.due && <span className="chip" style={isOverdue(w) ? { color: "#FD0E33" } : null}>{fmtD(w.due)}</span>}
                       {parentLabel(data, w) && <span className="chip">{parentLabel(data, w)}</span>}
                       {w.status === "Blocked" && <span className="chip" style={{ color: "#FD0E33" }}>Blocked</span>}
-                      {w.status === "Waiting" && <span className="chip">Waiting: {w.waitingOn || "?"}</span>}
+                      {isWaiting(w) && <span className="chip">Waiting: {w.waitingOn || "?"}</span>}
                       <span style={{ marginLeft: "auto", display: "flex", gap: 2 }}>
                         <button className="btn sm" onClick={() => bump(w.id, -5)} title="Raise">▲</button>
                         <button className="btn sm" onClick={() => bump(w.id, 5)} title="Lower">▼</button>
@@ -1307,13 +964,13 @@ function Priorities({ data, mutate, openItem }) {
       <div className="h2">Daily planning</div>
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         <div className="card"><div className="flab">Quick wins (low effort, ready to go)</div>
-          {open.filter((w) => w.priority === "Low" && w.status !== "Waiting" && w.nextAction).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
+          {open.filter((w) => ["P4", "P5"].includes(w.priority) && !isWaiting(w) && w.nextAction).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
         </div>
         <div className="card"><div className="flab">To chase today</div>
-          {open.filter((w) => w.status === "Waiting" && (!w.nextChase || daysUntil(w.nextChase) <= 0)).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title} <span className="chip">{w.waitingOn}</span></div>)}
+          {open.filter((w) => isWaiting(w) && (!w.nextChase || daysUntil(w.nextChase) <= 0)).slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title} <span className="chip">{w.waitingOn}</span></div>)}
         </div>
         <div className="card"><div className="flab">Delegation candidates (owned by me, not started)</div>
-          {open.filter((w) => isMine(data, w) && ["Planned", "Inbox"].includes(w.status) && w.priority !== "Critical").slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
+          {open.filter((w) => isMine(data, w) && ["Planned", "Inbox"].includes(w.status) && w.priority !== "P1").slice(0, 5).map((w) => <div key={w.id} className="checkline" style={{ cursor: "pointer" }} onClick={() => openItem(w)}>{w.title}</div>)}
         </div>
       </div>
     </div>
@@ -1321,65 +978,142 @@ function Priorities({ data, mutate, openItem }) {
 }
 
 /* ============================================================
-   Action board (Kanban by status)
+   Action board — Kanban, with Waiting as a column fed by MODE rather
+   than status, so a blocked item can still be recorded as waiting on a
+   named person.
+
+   Completed work leaves the board the moment it is done. It is not
+   deleted — Archive & History holds it — because a Done column that
+   only ever grows is a list of things nobody needs to look at.
    ============================================================ */
+const BOARD_COLS = [
+  { key: "Inbox", label: "Inbox" },
+  { key: "Planned", label: "Not started" },
+  { key: "In Progress", label: "In progress" },
+  { key: "Waiting", label: "Waiting on" },
+  { key: "Blocked", label: "Blocked" },
+];
+/* Saved views, as tabs. Each is a filter over the same records — one
+   source, many views — so nothing is duplicated to appear in two places. */
+const BOARD_VIEWS = {
+  "Board": () => true,
+  "Focus": (d, w) => w.focus,
+  "My actions": (d, w) => isMine(d, w) && !isWaiting(w),
+  "Waiting on": (d, w) => isWaiting(w),
+  "This week": (d, w) => w.due && daysUntil(w.due) <= 7,
+  "Overdue": (d, w) => isOverdue(w),
+  "P1 & P2": (d, w) => ["P1", "P2"].includes(w.priority),
+};
+
+function ItemCard({ data, w, onOpen, onDragStart, mutate }) {
+  const sub = subtaskProgress(w);
+  const badge = dueBadge(w);
+  const parent = parentLabel(data, w);
+  const ctx = ctxNames(data, w.contexts);
+  const toggleFocus = (e) => {
+    e.stopPropagation();
+    mutate((d) => { const x = d.workItems.find((i) => i.id === w.id); if (x) { x.focus = !x.focus; x.updatedAt = todayISO(); } return d; }, (w.focus ? "Unfocused " : "Focused ") + w.title);
+  };
+  return (
+    <div className="kcard" draggable onDragStart={onDragStart} onClick={() => onOpen(w)}>
+      <div className="kt">{w.title}</div>
+      <div className="kmeta">
+        <Badge p={w.priority} />
+        {badge && <span className={"duechip " + badge.tone}>{badge.text}</span>}
+        {sub && <span className="chip">{sub.done}/{sub.total}</span>}
+        {isWaiting(w) && w.waitingOn && <span className="chip wait">on {w.waitingOn}</span>}
+        {!isWaiting(w) && w.owner && !isMine(data, w) && <span className="chip">@{w.owner}</span>}
+        {parent && <span className="chip">{parent.slice(0, 22)}</span>}
+        {ctx.slice(0, 2).map((c) => <span key={c} className="chip ctx">{c}</span>)}
+        {w.estimate ? <span className="chip">{w.estimate}m</span> : null}
+        <span className={"focusdot" + (w.focus ? " on" : "")} title={w.focus ? "In Focus — click to remove" : "Add to Focus"} onClick={toggleFocus}>★</span>
+      </div>
+    </div>
+  );
+}
+
 function ActionBoard({ data, mutate, openItem, newItem }) {
-  const [f, setF] = useState({ q: "", owner: "", project: "", country: "", type: "", view: "All" });
-  const cols = ["Inbox", "Planned", "In Progress", "Waiting", "Blocked", "Review", "Done"];
-  let rows = data.workItems.filter((w) => w.status !== "Cancelled" && w.status !== "Parked");
-  if (f.view === "My actions") rows = rows.filter((w) => isMine(data, w));
-  if (f.view === "Delegated") rows = rows.filter((w) => w.owner && !isMine(data, w));
-  if (f.view === "Critical") rows = rows.filter((w) => w.priority === "Critical");
-  if (f.view === "Overdue") rows = rows.filter(isOverdue);
+  const [f, setF] = useState({ q: "", owner: "", project: "", context: "", type: "", view: "Board" });
+  const test = BOARD_VIEWS[f.view] || BOARD_VIEWS.Board;
+  let rows = data.workItems.filter((w) => isOpen(w) && !isArchived(w));
+  rows = rows.filter((w) => test(data, w));
   if (f.q) rows = rows.filter((w) => (w.title + " " + w.description).toLowerCase().includes(f.q.toLowerCase()));
-  if (f.owner) rows = rows.filter((w) => w.owner === f.owner);
+  if (f.owner) rows = rows.filter((w) => w.owner === f.owner || w.waitingOn === f.owner);
   if (f.project) rows = rows.filter((w) => w.project === f.project || w.mob === f.project);
-  if (f.country) rows = rows.filter((w) => w.country === f.country);
+  if (f.context) rows = rows.filter((w) => (w.contexts || []).includes(f.context));
   if (f.type) rows = rows.filter((w) => w.type === f.type);
-  rows = rows.filter((w) => w.status !== "Done" || daysSince(w.completed) <= 14);
-  const owners = [...new Set(data.workItems.map((w) => w.owner).filter(Boolean))].sort();
-  const drop = (st) => (e) => {
+  const owners = [...new Set(data.workItems.flatMap((w) => [w.owner, w.waitingOn]).filter(Boolean))].sort();
+
+  /* Dropping onto Waiting changes the mode; dropping anywhere else changes
+     the status and returns the item to being mine. */
+  const drop = (col) => (e) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("id"); if (!id) return;
-    mutate((d) => { const w = d.workItems.find((x) => x.id === id); if (w) { w.status = st; w.updatedAt = todayISO(); if (st === "Done" && !w.completed) w.completed = todayISO(); } return d; }, "Status → " + st);
+    mutate((d) => {
+      const w = d.workItems.find((x) => x.id === id);
+      if (!w) return d;
+      if (col.key === "Waiting") { w.mode = "Waiting on"; if (w.status === "Inbox") w.status = "Planned"; }
+      else { w.status = col.key; w.mode = "Action"; }
+      w.updatedAt = todayISO();
+      return d;
+    }, col.key === "Waiting" ? "Moved to Waiting on" : "Status → " + col.key);
   };
+  const columnOf = (w) => (isWaiting(w) ? "Waiting" : w.status);
+  const complete = (w) => mutate((d) => {
+    const x = d.workItems.find((i) => i.id === w.id);
+    if (x) { x.status = "Done"; x.completed = todayISO(); x.archivedAt = todayISO(); x.updatedAt = todayISO(); }
+    return d;
+  }, "Completed and archived: " + w.title);
+  const doneToday = data.workItems.filter((w) => w.status === "Done" && w.completed === todayISO());
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2 className="h1">Action Board</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => newItem()}>+ New work item</button>
       </div>
+      <div className="viewtabs">
+        {Object.keys(BOARD_VIEWS).map((v) => {
+          const n = data.workItems.filter((w) => isOpen(w) && !isArchived(w) && BOARD_VIEWS[v](data, w)).length;
+          return <button key={v} className={"vtab" + (f.view === v ? " on" : "")} onClick={() => setF({ ...f, view: v })}>{v}<span>{n}</span></button>;
+        })}
+      </div>
       <div className="toolrow" style={{ marginTop: 8 }}>
-        {["All", "My actions", "Delegated", "Critical", "Overdue"].map((v) => <button key={v} className={"btn sm" + (f.view === v ? " pri" : "")} onClick={() => setF({ ...f, view: v })}>{v}</button>)}
         <input className="input" placeholder="Search…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
-        <select className="select" value={f.owner} onChange={(e) => setF({ ...f, owner: e.target.value })}><option value="">Owner: all</option>{owners.map((o) => <option key={o}>{o}</option>)}</select>
+        <select className="select" value={f.owner} onChange={(e) => setF({ ...f, owner: e.target.value })}><option value="">Person: all</option>{owners.map((o) => <option key={o}>{o}</option>)}</select>
         <select className="select" value={f.project} onChange={(e) => setF({ ...f, project: e.target.value })}><option value="">Project/Mob: all</option>
           {data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           {data.mobs.map((m) => <option key={m.id} value={m.id}>[Mob] {m.name}</option>)}</select>
-        <select className="select" value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}><option value="">Country: all</option>{COUNTRIES.map((c) => <option key={c}>{c}</option>)}</select>
+        <select className="select" value={f.context} onChange={(e) => setF({ ...f, context: e.target.value })}><option value="">Context: all</option>{data.contexts.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <select className="select" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">Type: all</option>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+        {(f.q || f.owner || f.project || f.context || f.type) && <button className="btn sm" onClick={() => setF({ ...f, q: "", owner: "", project: "", context: "", type: "" })}>Clear</button>}
       </div>
       <div className="kwrap">
-        {cols.map((st) => {
-          const items = rows.filter((w) => w.status === st).sort((a, b) => prioRank(a.priority) - prioRank(b.priority) || (a.due || "9999").localeCompare(b.due || "9999"));
+        {BOARD_COLS.map((col) => {
+          const items = rows.filter((w) => columnOf(w) === col.key)
+            .sort((a, b) => prioRank(a.priority) - prioRank(b.priority) || (a.due || "9999").localeCompare(b.due || "9999"));
           return (
-            <div key={st} className="kcol" onDragOver={(e) => e.preventDefault()} onDrop={drop(st)}>
-              <h4>{st}<span>{items.length}</span></h4>
+            <div key={col.key} className="kcol" onDragOver={(e) => e.preventDefault()} onDrop={drop(col)}>
+              <h4>{col.label}<span>{items.length}</span></h4>
               <div className="kbody">
-                {items.map((w) => (
-                  <div key={w.id} className="kcard" draggable onDragStart={(e) => e.dataTransfer.setData("id", w.id)} onClick={() => openItem(w)}>
-                    <div className="kt">{w.title}</div>
-                    <div className="kmeta">
-                      <Badge p={w.priority} /><span className="chip">{w.type}</span>
-                      {w.due && <span className="chip" style={isOverdue(w) ? { color: "#FD0E33", fontWeight: 600 } : null}>{fmtD(w.due)}</span>}
-                      {parentLabel(data, w) && <span className="chip">{parentLabel(data, w).slice(0, 22)}</span>}
-                      {w.owner && w.owner !== "Me" && <span className="chip">@{w.owner}</span>}
-                      {st === "Waiting" && w.waitingOn && <span className="chip">on {w.waitingOn}</span>}
-                    </div>
-                  </div>))}
+                {items.map((w) => <ItemCard key={w.id} data={data} w={w} onOpen={openItem} mutate={mutate}
+                  onDragStart={(e) => e.dataTransfer.setData("id", w.id)} />)}
+                {!items.length && <div className="kempty">Nothing here</div>}
               </div>
             </div>);
         })}
+        <div className="kcol done" onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("id"); const w = data.workItems.find((x) => x.id === id); if (w) complete(w); }}>
+          <h4>Done<span>{doneToday.length}</span></h4>
+          <div className="kbody">
+            <div className="kempty">Drop here to complete.<br />Completed work goes straight to Archive &amp; History rather than piling up on the board.</div>
+            {doneToday.map((w) => (
+              <div key={w.id} className="kcard muted" onClick={() => openItem(w)}>
+                <div className="kt">{w.title}</div>
+                <div className="kmeta"><span className="chip">done today</span></div>
+              </div>))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1390,7 +1124,7 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
    ============================================================ */
 function Waiting({ data, mutate, openItem }) {
   const [chasePick, setChasePick] = useState(null);
-  const rows = data.workItems.filter((w) => w.status === "Waiting");
+  const rows = data.workItems.filter((w) => isWaiting(w));
   const bucket = (w) => {
     const nc = w.nextChase ? daysUntil(w.nextChase) : null;
     if (nc !== null && nc < 0) return "Overdue for chase";
@@ -1438,7 +1172,7 @@ function Waiting({ data, mutate, openItem }) {
                     <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                       <button className="btn sm pri" onClick={() => markChased(w.id)}>Chased today</button>
                       <button className="btn sm" onClick={async () => { const r = await askPrompt("Record the response received:"); if (r) act(w.id, (x) => { x.notes.push({ ts: todayISO(), text: "Response: " + r }); x.status = "In Progress"; }, "Response recorded — back in progress"); }}>Record response</button>
-                      <button className="btn sm" onClick={() => act(w.id, (x) => { x.priority = "Critical"; x.notes.push({ ts: todayISO(), text: "Escalated" }); }, "Escalated")}>Escalate</button>
+                      <button className="btn sm" onClick={() => act(w.id, (x) => { x.priority = "P1"; x.notes.push({ ts: todayISO(), text: "Escalated" }); }, "Escalated")}>Escalate</button>
                       <button className="btn sm" onClick={() => act(w.id, (x) => { x.status = "Cancelled"; x.notes.push({ ts: todayISO(), text: "No longer required" }); }, "Marked not required")}>Not required</button>
                     </span>)}
                 </td>
@@ -1576,7 +1310,11 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
           <F label="Stage"><select className="select" value={p.stage} onChange={(e) => set("stage", e.target.value)}>
             {(PROJECT_STAGES.includes(p.stage) || !p.stage ? PROJECT_STAGES : [p.stage, ...PROJECT_STAGES]).map((s) => <option key={s}>{s}</option>)}
           </select></F>
-          <F label="RAG"><select className="select" value={p.rag} onChange={(e) => set("rag", e.target.value)}>{RAGS.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <F label={"RAG — calculated: " + portfolioAttention(data, p, "project", data.settings).rag}>
+            <select className="select" value={p.ragOverride || ""} onChange={(e) => set("ragOverride", e.target.value)}>
+              <option value="">Use the calculated value</option>
+              {RAGS.map((s) => <option key={s}>{s}</option>)}
+            </select></F>
           <F label="Confidence"><select className="select" value={p.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Country"><select className="select" value={p.country} onChange={(e) => set("country", e.target.value)}>{COUNTRIES.map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Workstream"><select className="select" value={p.workstream} onChange={(e) => set("workstream", e.target.value)}><option value="">—</option>{WORKSTREAMS.map((s) => <option key={s}>{s}</option>)}</select></F>
@@ -1627,8 +1365,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
     const items = data.workItems.filter((w) => w.project === p.id);
     const h = projectHealth(data, p);
     const updates = data.updates.filter((u) => u.project === p.id).sort((a, b) => b.date.localeCompare(a.date));
-    const bens = data.benefits.filter((b) => b.project === p.id);
-    const lessons = data.lessons.filter((l) => l.project === p.id);
+    const lessons = (data.lessons || []).filter((l) => l.project === p.id);
     const addUpdate = () => {
       if (!updText.trim()) return;
       mutate((d) => {
@@ -1702,7 +1439,6 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail }) {
         {!updates.length && <div className="sub">No updates yet.</div>}
         <div className="h2">Linked work items ({items.length})</div>
         <ItemsTable data={data} rows={items} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
-        {bens.length > 0 && <><div className="h2">Benefits</div>{bens.map((b) => <div key={b.id} className="checkline"><span style={{ flex: 1 }}>{b.title}</span><span className="chip">{b.type}</span><span className="chip">Expected {b.expected}</span><span className="chip">Actual {b.actual || "—"}</span><span className="chip">{b.confidence}</span></div>)}</>}
         {lessons.length > 0 && <><div className="h2">Lessons learned</div>{lessons.map((l) => <div key={l.id} className="checkline"><span style={{ flex: 1 }}>{l.title}</span><span className="chip">{l.status}</span></div>)}</>}
         {editing && <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />}
       </div>
@@ -1770,7 +1506,11 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
           <F label="Owner"><input className="input" value={m.owner} onChange={(e) => set("owner", e.target.value)} /></F>
           <F label="Sponsor"><input className="input" value={m.sponsor} onChange={(e) => set("sponsor", e.target.value)} /></F>
           <F label="Stage"><select className="select" value={m.stage} onChange={(e) => set("stage", e.target.value)}>{MOB_STAGES.map((s) => <option key={s}>{s}</option>)}</select></F>
-          <F label="RAG"><select className="select" value={m.rag} onChange={(e) => set("rag", e.target.value)}>{RAGS.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <F label={"RAG — calculated: " + portfolioAttention(data, m, "mob", data.settings).rag}>
+            <select className="select" value={m.ragOverride || ""} onChange={(e) => set("ragOverride", e.target.value)}>
+              <option value="">Use the calculated value</option>
+              {RAGS.map((s) => <option key={s}>{s}</option>)}
+            </select></F>
           <F label="Country"><select className="select" value={m.country} onChange={(e) => set("country", e.target.value)}>{COUNTRIES.map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Confidence"><select className="select" value={m.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Go-live date"><input type="date" className="input" value={m.goLive} onChange={(e) => set("goLive", e.target.value)} /></F>
@@ -2226,12 +1966,12 @@ function boardSources(data, section) {
     case "wins": return [
       ...data.updates.filter((u) => u.flags.board && u.rag === "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
       ...done30.filter((w) => w.flags.board).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.outcome ? " — " + w.outcome : ""}` }))];
-    case "projects": return data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map((p) => ({ id: "p" + p.id, text: `${p.name} (${p.rag}, ${p.progress}%): ${p.position || "no position recorded"}${p.nextMilestone ? " Next: " + p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")." : ""}` }));
-    case "mobs": return data.mobs.filter((m) => m.stage !== "Closed").map((m) => { const r = mobReadiness(m); return { id: "m" + m.id, text: `${m.name} (${m.rag}): ${r.pct}% ready, go-live ${fmtD(m.goLive)}. ${m.position || ""}` }; });
+    case "projects": return data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map((p) => ({ id: "p" + p.id, text: `${p.name} (${portfolioAttention(data, p, "project", data.settings).rag}, ${p.progress}%): ${p.position || "no position recorded"}${p.nextMilestone ? " Next: " + p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")." : ""}` }));
+    case "mobs": return data.mobs.filter((m) => m.stage !== "Closed").map((m) => { const r = mobReadiness(m); return { id: "m" + m.id, text: `${m.name} (${portfolioAttention(data, m, "mob", data.settings).rag}): ${r.pct}% ready, go-live ${fmtD(m.goLive)}. ${m.position || ""}` }; });
     case "concerns": return [
       ...data.updates.filter((u) => u.flags.board && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
-      ...data.workItems.filter((w) => w.type === "Issue" && OPEN_STATUSES.includes(w.status) && ["Critical", "High"].includes(w.priority)).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.extra?.corrective ? " — corrective: " + w.extra.corrective : ""}` }))];
-    case "risks": return data.workItems.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.flags.board || ["Critical", "High"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `${w.title} (${w.extra?.rating || w.priority}). Mitigation: ${w.extra?.mitigation || "NONE RECORDED"}` }));
+      ...data.workItems.filter((w) => w.type === "Issue" && OPEN_STATUSES.includes(w.status) && ["P1", "P2"].includes(w.priority)).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.extra?.corrective ? " — corrective: " + w.extra.corrective : ""}` }))];
+    case "risks": return data.workItems.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.flags.board || ["P1", "P2"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `${w.title} (${w.extra?.rating || w.priority}). Mitigation: ${w.extra?.mitigation || "NONE RECORDED"}` }));
     case "decisions": return data.workItems.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status) && w.flags.board).map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}${w.extra?.recommended ? ". Recommended: " + w.extra.recommended : ""}` }));
     case "next": return data.workItems.filter((w) => OPEN_STATUSES.includes(w.status) && w.horizon === "Now").sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 6).map((w) => ({ id: "w" + w.id, text: w.title }));
     default: return [];
@@ -2287,7 +2027,7 @@ function ReportWorkspace({ data, mutate }) {
     ];
     if (k === "challenges") return [
       ...open.filter((w) => w.status === "Blocked").slice(0, 8).map((w) => ({ id: "wb" + w.id, text: `Blocked: ${w.title}${w.blocker ? " — " + w.blocker : ""}` })),
-      ...open.filter((w) => w.type === "Issue" && ["Critical", "High"].includes(w.priority)).slice(0, 6).map((w) => ({ id: "wi" + w.id, text: `Issue: ${w.title}` })),
+      ...open.filter((w) => w.type === "Issue" && ["P1", "P2"].includes(w.priority)).slice(0, 6).map((w) => ({ id: "wi" + w.id, text: `Issue: ${w.title}` })),
       ...data.updates.filter((u) => u.flags.coo && u.rag && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
     ];
     if (k === "projects") return boardSources(data, "projects");
@@ -2296,8 +2036,8 @@ function ReportWorkspace({ data, mutate }) {
       .sort((a, b) => (b.flags?.coo ? 1 : 0) - (a.flags?.coo ? 1 : 0))
       .map((w) => ({ id: "w" + w.id, text: `${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}${w.extra?.recommended ? ". Recommended: " + w.extra.recommended : ""}` }));
     if (k === "aob") return [
-      ...open.filter((w) => w.type === "Risk" && (w.flags.coo || ["Critical", "High"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `Risk: ${w.title}${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : ""}` })),
-      ...open.filter((w) => w.status === "Waiting" && ["Critical", "High"].includes(w.priority)).slice(0, 5).map((w) => ({ id: "we" + w.id, text: `Possible escalation: ${w.title} — waiting on ${w.waitingOn || "?"}` })),
+      ...open.filter((w) => w.type === "Risk" && (w.flags.coo || ["P1", "P2"].includes(w.priority))).map((w) => ({ id: "w" + w.id, text: `Risk: ${w.title}${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : ""}` })),
+      ...open.filter((w) => isWaiting(w) && ["P1", "P2"].includes(w.priority)).slice(0, 5).map((w) => ({ id: "we" + w.id, text: `Possible escalation: ${w.title} — waiting on ${w.waitingOn || "?"}` })),
     ];
     const kws = COO_KEYWORDS[k] || [];
     return open.filter((w) => {
@@ -2561,7 +2301,7 @@ function WeeklyReview({ data, mutate, go }) {
     ["Process everything in the capture inbox", data.workItems.filter((w) => w.status === "Inbox").length + " in inbox", "capture"],
     ["Review overdue items — reschedule, delegate or drop", open.filter(isOverdue).length + " overdue", "actions"],
     ["Review everything due next week", open.filter((w) => { const d = daysUntil(w.due); return d >= 0 && d <= 7; }).length + " due", "actions"],
-    ["Chase or re-date all waiting items", data.workItems.filter((w) => w.status === "Waiting").length + " waiting", "waiting"],
+    ["Chase or re-date all waiting items", data.workItems.filter((w) => isWaiting(w)).length + " waiting", "waiting"],
     ["Attack blockers — what would unblock each one?", open.filter((w) => w.status === "Blocked").length + " blocked", "actions"],
     ["Update every active project position", data.projects.filter((p) => daysSince(p.updatedAt) > 7 && !["Closed", "Cancelled"].includes(p.stage)).length + " not updated this week", "projects"],
     ["Update every mobilisation and its checklist", data.mobs.filter((m) => daysSince(m.updatedAt) > 7 && m.stage !== "Closed").length + " not updated this week", "mobs"],
@@ -2951,11 +2691,26 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
 /* ============================================================
    Global search + Ask anything (AI over your own data)
    ============================================================ */
+/* The workspace, as the AI sees it.
+
+   One hard boundary: CONFIDENTIAL_PERSON_FIELDS — strengths, development,
+   private notes and PDR history — never appear here. Those are personal
+   data about named colleagues, and the fence is enforced by this function
+   rather than by remembering not to ask. People appear only as names,
+   roles and what they are holding.                                      */
 function serialiseForAI(data) {
   const lim = (s, n) => (s || "").slice(0, n);
-  const items = openItems(data).map((w) => ({ title: w.title, type: w.type, status: w.status, priority: w.priority, owner: w.owner, waitingOn: w.waitingOn || undefined, due: w.due || undefined, project: projName(data, w.project) || undefined, mob: mobName(data, w.mob) || undefined, nextAction: lim(w.nextAction, 80) || undefined, blocker: lim(w.blocker, 80) || undefined, madeTo: w.extra?.madeTo }));
-  const projects = data.projects.map((p) => ({ name: p.name, stage: p.stage, rag: p.rag, progress: p.progress, owner: p.owner, target: p.target, position: lim(p.position, 140) }));
-  const mobs = data.mobs.map((m) => ({ name: m.name, stage: m.stage, rag: m.rag, goLive: m.goLive, readiness: mobReadiness(m).pct + "%" }));
+  const items = openItems(data).map((w) => ({ title: w.title, type: w.type, status: w.status, mode: w.mode, priority: w.priority, owner: w.owner, waitingOn: w.waitingOn || undefined, due: w.due || undefined, project: projName(data, w.project) || undefined, mob: mobName(data, w.mob) || undefined, contexts: ctxNames(data, w.contexts).join(", ") || undefined, nextAction: lim(w.nextAction, 80) || undefined, blocker: lim(w.blocker, 80) || undefined, madeTo: w.extra?.madeTo }));
+  const projects = data.projects.map((p) => ({ name: p.name, stage: p.stage, rag: portfolioAttention(data, p, "project", data.settings).rag, progress: p.progress, owner: p.owner, target: p.target, contexts: ctxNames(data, p.contexts).join(", ") || undefined, position: lim(p.position, 140) }));
+  const mobs = data.mobs.map((m) => ({ name: m.name, stage: m.stage, rag: m.rag, goLive: m.goLive, contexts: ctxNames(data, m.contexts).join(", ") || undefined, readiness: mobReadiness(m).pct + "%" }));
+  /* Names, roles and load only. Nothing from the Development tab. */
+  const people = (data.people || []).map((p) => {
+    const l = personLoad(data, p);
+    return { name: p.name, role: p.role || undefined, relationship: p.relationship, waitingOnThem: l.waitingOnThem.length || undefined, overdue: l.overdue.length || undefined };
+  });
+  const goals = (data.okrs || []).map((o) => ({ objective: o.objective, measure: o.measure, baseline: o.baseline, current: o.current, target: o.target, deadline: o.deadline, health: okrHealth(o), owner: o.owner }));
+  const meetings = (data.meetings || []).slice(-25).map((m) => ({ title: m.title, date: m.date, type: m.type, people: (m.people || []).join(", ") || undefined, processed: m.processed, summary: lim(m.summary, 400) || undefined }));
+  const contexts = data.contexts.filter((c) => c.active).map((c) => `${c.name} (${c.type})`);
   const ctx = data.context || {};
   const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules, ctx.learned].filter(Boolean).join("\n"), 4000) || undefined;
   // Balanced scorecard: the lead entity's targeted measures, so the AI can
@@ -2965,7 +2720,7 @@ function serialiseForAI(data) {
     .filter((m) => m.target !== null && m.target !== undefined)
     .map((m) => { const li = lastIdx(m); const yv = ytd(m); return `${m.name}: last ${li >= 0 ? MONTHS[li] + " " + fmtVal(m, m.cur[li], true) : "n/a"}, YTD ${fmtVal(m, yv, true)} vs YTD target ${fmtVal(m, ytdTarget(m), true)} (${ragYtd(m) || "-"})`; }))
     .join("; "), 2400) || undefined : undefined;
-  return JSON.stringify({ today: todayISO(), context, scorecard, items, projects, mobs }).slice(0, 18000);
+  return JSON.stringify({ today: todayISO(), context, contexts, scorecard, items, projects, mobs, people, goals, meetings }).slice(0, 26000);
 }
 function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   const [q, setQ] = useState("");
@@ -3098,10 +2853,11 @@ function Assistant({ data, mutate, auth, onClose }) {
       input_schema: { type: "object", properties: {
         title: { type: "string" }, description: { type: "string" },
         type: { type: "string", enum: CORE_TYPES }, owner: { type: "string" }, waitingOn: { type: "string" },
-        due: { type: "string", description: "YYYY-MM-DD" }, priority: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+        due: { type: "string", description: "YYYY-MM-DD" }, priority: { type: "string", enum: PRIORITIES },
         horizon: { type: "string", enum: ["Now", "Next", "Later"] }, project: { type: "string", description: "exact project name" },
         mobilisation: { type: "string", description: "exact mobilisation name" }, workstream: { type: "string" },
-        country: { type: "string", enum: COUNTRIES }, nextAction: { type: "string" },
+        contexts: { type: "array", items: { type: "string" }, description: "exact operational context names: " + data.contexts.filter((c) => c.active).map((c) => c.name).join(", ") },
+        nextAction: { type: "string" },
       }, required: ["title"] },
     },
     {
@@ -3110,6 +2866,8 @@ function Assistant({ data, mutate, auth, onClose }) {
       input_schema: { type: "object", properties: {
         title: { type: "string", description: "exact existing title" },
         status: { type: "string", enum: STATUSES }, priority: { type: "string", enum: PRIORITIES },
+        mode: { type: "string", enum: MODES, description: "'Waiting on' when somebody else holds it, 'Action' when it is the user's own" },
+        focus: { type: "boolean", description: "true to mark as something the user intends to move" },
         due: { type: "string" }, owner: { type: "string" }, waitingOn: { type: "string" },
         nextAction: { type: "string" }, nextChase: { type: "string" }, lastChased: { type: "string" },
         horizon: { type: "string", enum: HORIZONS }, blocker: { type: "string" }, outcome: { type: "string" },
@@ -3133,16 +2891,15 @@ function Assistant({ data, mutate, auth, onClose }) {
       mutate((d) => {
         const proj = d.projects.find((x) => x.name === a.project);
         const mob = d.mobs.find((x) => x.name === a.mobilisation);
-        d.workItems.push({
-          id: uid(), title: a.title, description: a.description || "", type: CORE_TYPES.includes(a.type) ? a.type : "Action",
-          status: a.waitingOn ? "Waiting" : "Planned", priority: PRIORITIES.includes(a.priority) ? a.priority : "Medium",
+        d.workItems.push(blankItem(d, {
+          title: a.title, description: a.description || "", type: CORE_TYPES.includes(a.type) ? a.type : "Action",
+          mode: a.waitingOn ? "Waiting on" : "Action", priority: PRIORITIES.includes(a.priority) ? a.priority : "P3",
           owner: a.owner || meName(d), waitingOn: a.waitingOn || "", project: proj ? proj.id : "", mob: mob ? mob.id : "",
-          workstream: a.workstream || "", country: COUNTRIES.includes(a.country) ? a.country : d.settings.defaultCountry,
-          client: "", due: a.due || "", nextChase: "", lastChased: "", completed: "", created: todayISO(), updatedAt: todayISO(),
-          rag: "", nextAction: a.nextAction || "", blocker: "", horizon: HORIZONS.includes(a.horizon) ? a.horizon : "Next", rank: 50,
-          flags: { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }, confidentiality: "Internal",
-          notes: [{ ts: todayISO(), text: "Created by the assistant on the user's instruction" }], extra: {}, outcome: "",
-        });
+          workstream: a.workstream || "",
+          contexts: (a.contexts || []).map((nm) => (d.contexts.find((c) => c.name.toLowerCase() === String(nm).toLowerCase()) || {}).id).filter(Boolean),
+          due: a.due || "", nextAction: a.nextAction || "", horizon: HORIZONS.includes(a.horizon) ? a.horizon : "Next",
+          notes: [{ ts: todayISO(), text: "Created by the assistant on the user's instruction" }],
+        }));
         created = a.title;
         return d;
       }, "Assistant created: " + a.title);
@@ -3421,9 +3178,12 @@ function ClipFab({ open, onClick }) {
   );
 }
 
+/* Navigation reflects how the work is thought about, not how the records
+   are stored. "Tasks database" is not a place anyone wants to go. */
 const NAV = [
-  ["Daily working", [["command", "Command Centre"], ["capture", "Capture Inbox"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
-  ["Delivery", [["kpis", "SLA & KPIs"], ["projects", "Projects"], ["mobs", "Mobilisations"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"], ["country", "Country View"]]],
+  ["Daily working", [["command", "Command Centre"], ["capture", "Capture"], ["priorities", "My Priorities"], ["actions", "Action Board"], ["waiting", "Waiting & Chasing"]]],
+  ["Oversight", [["portfolio", "Portfolio"], ["projects", "Projects"], ["mobs", "Mobilisations"], ["okrs", "Goals & OKRs"], ["kpis", "SLA & KPIs"]]],
+  ["Context", [["contexts", "Operational Contexts"], ["people", "People"], ["meetings", "Meetings"], ["risks", "Risks & Issues"], ["decisions", "Decisions & Commitments"]]],
   ["Reporting", [["coo", "COO & Board Update"], ["newsletter", "Newsletter"], ["weekly", "Weekly Review"]]],
   ["System", [["archive", "Archive & History"], ["settings", "Settings & Data"]]],
 ];
@@ -3441,6 +3201,7 @@ export default function App({ auth }) {
   const [roNotice, setRoNotice] = useState(false);
   const [pendingReqs, setPendingReqs] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
+  const [screenKey, setScreenKey] = useState(0);
   const [syncNote, setSyncNote] = useState("");
   const lastSynced = useRef(0);
   const prevNav = useRef("command");
@@ -3474,40 +3235,18 @@ export default function App({ auth }) {
       if (d.settings.displayName !== displayName) { d.settings.displayName = displayName; dirty = true; }
       if (!d.context) { d.context = { org: "", people: "", clients: "", rules: "", learned: "" }; dirty = true; }
       if (!d.kpi) d.kpi = { year: new Date().getFullYear(), updated: "", entities: [] };
-      // Move existing records off the retired list values onto the shorter
-      // lists. Every mapping keeps work where it was: nothing live becomes
-      // closed, and nothing restricted becomes shareable.
-      const remap = (obj, key, map) => {
-        if (obj && map[obj[key]]) { obj[key] = map[obj[key]]; return true; }
-        return false;
-      };
-      d.projects.forEach((p) => {
-        if (remap(p, "stage", LEGACY_STAGES)) dirty = true;
-        if (remap(p, "workstream", LEGACY_WORKSTREAMS)) dirty = true;
-      });
-      d.mobs.forEach((m) => { if (remap(m, "stage", LEGACY_MOB_STAGES)) dirty = true; });
-      d.workItems.forEach((w) => {
-        if (remap(w, "status", LEGACY_STATUS)) dirty = true;
-        if (remap(w, "workstream", LEGACY_WORKSTREAMS)) dirty = true;
-        if (remap(w, "confidentiality", LEGACY_CONF)) dirty = true;
-        if (w.priority === "Parked") { w.priority = "Low"; w.horizon = "Parked"; dirty = true; }
-        if (w.extra && remap(w.extra, "decisionStatus", LEGACY_DECISION)) dirty = true;
-      });
-      (d.updates || []).forEach((u) => { if (remap(u, "confidentiality", LEGACY_CONF)) dirty = true; });
-      // Repair records that arrived without the shapes the renderers
-      // dereference directly (imports, AI output, older backups): flags
-      // objects, notes arrays, extra objects.
-      d.workItems.forEach((w) => {
-        if (!w.flags || typeof w.flags !== "object") { w.flags = { board: false, coo: false, news: false, groupWeekly: false, ukWeekly: false }; dirty = true; }
-        if (w.notes != null && !Array.isArray(w.notes)) { w.notes = []; dirty = true; }
-        if (w.extra != null && typeof w.extra !== "object") { w.extra = {}; dirty = true; }
-      });
-      (d.updates || []).forEach((u) => {
-        if (!u.flags || typeof u.flags !== "object") { u.flags = { board: false, coo: false, news: false }; dirty = true; }
-      });
+      // Resolve identity BEFORE the migration runs: it harvests People records
+      // from owner and waiting-on names, and must not create a colleague out of
+      // the signed-in user's own name.
       if (canEdit && displayName !== "Me") {
         d.workItems.forEach((w) => { if (w.owner === "Me") { w.owner = displayName; dirty = true; } });
       }
+      // Move stored records onto the current lists, split status from mode,
+      // tag contexts from the old single country, and harvest People. Every
+      // mapping is conservative — see src/lib/model.js and tests/lists.mjs.
+      const mig = migrate(d);
+      d = mig.data;
+      if (mig.changed) dirty = true;
       // View-only accounts never see private items (also excluded from search/AI
       // because they simply aren't in the loaded document).
       if (auth && auth.mode === "cloud" && !auth.canEdit) {
@@ -3641,6 +3380,13 @@ export default function App({ auth }) {
     if (!canEdit) { setRoNotice(true); return; }
     setData((d) => {
       const nd = fn(JSON.parse(JSON.stringify(d)));
+      /* Health is derived, so it is recomputed wherever the facts behind it
+         change — which is here, the one place every edit passes through.
+         Keeping the stored `rag` in step means no screen can show a colour
+         that stopped being true three weeks ago. An explicit ragOverride
+         still wins; that is what an override is for. */
+      nd.projects.forEach((p) => { p.rag = portfolioAttention(nd, p, "project", nd.settings).rag; });
+      nd.mobs.forEach((m) => { m.rag = portfolioAttention(nd, m, "mob", nd.settings).rag; });
       nd.rev = (nd.rev || 0) + 1;
       if (activityText) nd.activity = [...(nd.activity || []).slice(-199), { ts: Date.now(), text: activityText }];
       return nd;
@@ -3658,7 +3404,17 @@ export default function App({ auth }) {
   // Accept only a plain preset object — a click EVENT passed by an unwrapped
   // onClick handler would smuggle circular DOM refs into the modal's state.
   const newItem = (preset) => setEditItem({ ...(preset && typeof preset === "object" && !preset.nativeEvent ? preset : {}) });
-  const go = (k) => { setNav(k); setNavOpen(false); if (k !== "projects") setProjDetail(null); if (k !== "mobs") setMobDetail(null); };
+  /* Clicking the sidebar entry for the screen you are already on takes you
+     back to the top of it. Screens that hold their own sub-selection — a
+     person, a context, a meeting — otherwise strand you inside one record
+     with the nav insisting you are somewhere broader. Bumping the key
+     remounts them, which is the whole reset. */
+  const go = (k) => {
+    if (k === nav) setScreenKey((n) => n + 1);
+    setNav(k); setNavOpen(false);
+    if (k !== "projects") setProjDetail(null);
+    if (k !== "mobs") setMobDetail(null);
+  };
   const toggleAssistant = () => {
     if (nav === "assistant") go(prevNav.current || "command");
     else { prevNav.current = nav; go("assistant"); }
@@ -3674,7 +3430,8 @@ export default function App({ auth }) {
     if (!(await askConfirm("Clear ALL data — every work item, project, mobilisation and report draft? Consider exporting a JSON backup first."))) return;
     if (!(await askConfirm("Absolutely sure? This cannot be undone."))) return;
     const fresh = seedData();
-    fresh.workItems = []; fresh.projects = []; fresh.mobs = []; fresh.updates = []; fresh.benefits = []; fresh.lessons = []; fresh.meetings = [];
+    fresh.workItems = []; fresh.projects = []; fresh.mobs = []; fresh.updates = []; fresh.lessons = []; fresh.meetings = [];
+    fresh.contexts = SEED_CONTEXTS.map((c) => ({ id: uid(), ...c, active: true })); fresh.people = []; fresh.okrs = []; fresh.sources = [];
     fresh.activity = [{ ts: Date.now(), text: "System reset — starting fresh" }];
     // Stay on the live revision line — a rev restarting at 1 loses the next
     // save's conflict check to the cloud copy, which would undo the reset.
@@ -3682,7 +3439,7 @@ export default function App({ auth }) {
     mutate(() => fresh, null);
   };
   const alertCount = computeAlerts(data).filter((a) => a.sev >= 2).length;
-  const counts = { capture: data.workItems.filter((w) => w.status === "Inbox").length, waiting: data.workItems.filter((w) => w.status === "Waiting").length };
+  const counts = { capture: data.workItems.filter((w) => w.status === "Inbox").length, waiting: data.workItems.filter((w) => isWaiting(w)).length };
 
   const view = (() => {
     switch (nav) {
@@ -3697,6 +3454,11 @@ export default function App({ auth }) {
       case "mobs": return <Mobilisations data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={mobDetail} setDetail={setMobDetail} />;
       case "risks": return <RisksView data={data} openItem={openItem} newItem={newItem} />;
       case "decisions": return <Decisions data={data} openItem={openItem} newItem={newItem} />;
+      case "portfolio": return <Portfolio data={data} openProject={openProject} openMob={openMob} openItem={openItem} />;
+      case "contexts": return <Contexts data={data} mutate={mutate} openItem={openItem} openProject={openProject} openMob={openMob} />;
+      case "people": return <People data={data} mutate={mutate} openItem={openItem} go={go} />;
+      case "meetings": return <Meetings data={data} mutate={mutate} openItem={openItem} />;
+      case "okrs": return <Okrs data={data} mutate={mutate} openProject={openProject} />;
       case "country": return <CountryView data={data} openItem={openItem} setNav={setNav} setProjDetail={setProjDetail} />;
       case "board": case "coo": return <ReportWorkspace data={data} mutate={mutate} />;
       case "newsletter": return <Newsletter data={data} mutate={mutate} />;
@@ -3746,7 +3508,7 @@ export default function App({ auth }) {
               </span>)}
           <span className="saved">{storageWarn ? "⚠ not saving — export a backup" : savedAt ? "Saved " + savedAt : "Saved"}</span>
         </div>
-        <div className="content">
+        <div className="content" key={screenKey}>
           {storageWarn && <div className="warnbox">Persistent storage isn't available right now. Your changes may be lost when you leave — use Settings → Export to take a JSON backup.</div>}
           {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Ask Paul Wardle if you need editing rights. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
           {syncNote && <div className="notebox">{syncNote} <span className="linkish" onClick={() => setSyncNote("")}>Dismiss</span></div>}

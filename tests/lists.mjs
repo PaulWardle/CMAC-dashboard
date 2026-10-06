@@ -2,9 +2,9 @@
    migration moves work in an unsafe direction. */
 import { readFileSync } from "fs";
 
-const src = readFileSync("/home/user/CMAC-dashboard/src/App.jsx", "utf8");
+const src = readFileSync("/home/user/CMAC-dashboard/src/lib/model.js", "utf8");
 function grab(name) {
-  const i = src.indexOf("const " + name + " = ");
+  const i = src.indexOf("export const " + name + " = ");
   if (i === -1) return null;
   const start = src.indexOf("=", i) + 1;
   // Read to the matching close of the first [ or { after the =
@@ -26,6 +26,7 @@ const CF = grab("CONFIDENTIALITY"), LCF = grab("LEGACY_CONF"), SH = grab("SHAREA
 const ST = grab("STATUSES"), LST = grab("LEGACY_STATUS");
 const DS = grab("DECISION_STATUSES"), LDS = grab("LEGACY_DECISION");
 const PS = grab("PROJECT_STAGES"), LPS = grab("LEGACY_STAGES");
+const PR = grab("PRIORITIES"), LPR = grab("LEGACY_PRIORITY");
 const MW = grab("MOB_WORKSTREAMS");
 
 const OLD = {
@@ -35,6 +36,7 @@ const OLD = {
   ST: ["Inbox","Planned","In Progress","Waiting","Blocked","Review","Done","Parked","Cancelled"],
   DS: ["Draft","Required","Awaiting Information","Submitted","Decided","Deferred","Withdrawn"],
   PS: ["Idea","Discovery","Definition","Planning","Delivery","Implementation","Hypercare","BAU Handover","Closed","On Hold","Cancelled"],
+  PR: ["Critical","High","Medium","Low","Parked"],
 };
 
 function complete(label, old, now, map) {
@@ -50,6 +52,14 @@ complete("Confidentiality", OLD.CF, CF, LCF);
 complete("Work item status", OLD.ST, ST, LST);
 complete("Decision status", OLD.DS, DS, LDS);
 complete("Project stages", OLD.PS, PS, LPS);
+complete("Priority", OLD.PR, PR, LPR);
+
+/* The status/mode split must not lose the old "Waiting" status: the work
+   stays open, and the fact that somebody else holds it moves to the mode. */
+P("Waiting is no longer a status", !ST.includes("Waiting"));
+P("A waiting item stays open rather than closing", OPEN().includes(LST["Waiting"]), "maps to " + LST["Waiting"]);
+P("Waiting on is an available mode", (grab("MODES") || []).includes("Waiting on"));
+function OPEN() { return grab("OPEN_STATUSES") || []; }
 
 /* Safety direction: a migration must never widen who can see something, and
    must never mark live work as finished. */
@@ -76,4 +86,5 @@ console.log("\n" + [
   "statuses         " + OLD.ST.length + " -> " + ST.length,
   "decisions        " + OLD.DS.length + " -> " + DS.length,
   "project stages   " + OLD.PS.length + " -> " + PS.length,
+  "priority         " + OLD.PR.length + " -> " + PR.length,
 ].join("\n"));
