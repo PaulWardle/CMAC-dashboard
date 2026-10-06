@@ -1136,9 +1136,11 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
 /* ============================================================
    Waiting and chasing
    ============================================================ */
-function Waiting({ data, mutate, openItem }) {
+function Waiting({ data, mutate, openItem, go }) {
   const [chasePick, setChasePick] = useState(null);
-  const rows = data.workItems.filter((w) => isWaiting(w));
+  // Open work only. Mode survives completion, so without this a chased-down
+  // item would sit on the list forever after it had actually arrived.
+  const rows = data.workItems.filter((w) => isWaiting(w) && isOpen(w));
   const bucket = (w) => {
     const nc = w.nextChase ? daysUntil(w.nextChase) : null;
     if (nc !== null && nc < 0) return "Overdue for chase";
@@ -1196,12 +1198,22 @@ function Waiting({ data, mutate, openItem }) {
       })}
       {!rows.length && <div className="empty">Nothing is waiting on anyone. Enjoy it while it lasts.</div>}
       <div className="h2">By person</div>
+      <p className="sub">Open anyone to see the whole picture with them — what they owe you, what you owe them, and the 1:1 brief.</p>
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))" }}>
-        {Object.entries(byPerson).map(([p, items]) => (
-          <div key={p} className="card">
-            <b>{p}</b> <span className="chip">{items.length} item{items.length > 1 ? "s" : ""}</span>
-            <div className="sub" style={{ margin: "4px 0 0" }}>Oldest: {Math.max(...items.map((w) => daysSince(w.lastChased || w.created) || 0))}d · Most critical: {items.sort((a, b) => prioRank(a.priority) - prioRank(b.priority))[0].priority}</div>
-          </div>))}
+        {Object.entries(byPerson).sort((a, b) => b[1].length - a[1].length).map(([p, items]) => {
+          const overdue = items.filter(isOverdue).length;
+          const top = [...items].sort((a, b) => prioRank(a.priority) - prioRank(b.priority))[0];
+          const known = personByName(data, p);
+          return (
+            <div key={p} className="card" style={known ? { cursor: "pointer" } : null} onClick={() => known && go && go("people")}>
+              <b>{p}</b> <span className="chip">{items.length} item{items.length > 1 ? "s" : ""}</span>
+              {overdue > 0 && <span className="chip overdue">{overdue} overdue</span>}
+              <div className="sub" style={{ margin: "4px 0 0" }}>
+                Oldest: {Math.max(...items.map((w) => daysSince(w.lastChased || w.created) || 0))}d · Most critical: {top.priority}
+                {!known && <> · <span style={{ color: "#B45309" }}>not on your People list</span></>}
+              </div>
+            </div>);
+        })}
       </div>
     </div>
   );
@@ -2954,6 +2966,13 @@ function Assistant({ data, mutate, auth, onClose }) {
 ${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did. When you learn a durable fact — a person's role, a client, an abbreviation, a standing preference, or the user corrects you on something lasting — save one concise note with remember_context so future captures and conversations know it. Don't save one-off task details that way." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
 Messages may include attached files — emails, documents, spreadsheets (as CSV text), PDFs, screenshots. Read them fully and pull out what matters${canEdit ? "; when asked to log from them, create the items with the tools" : ""}.
 Ground every answer ONLY in the workspace data below, the conversation and any attached files. If something isn't tracked, say so plainly. Label inferences as observations.
+
+HOW THE DATA IS SHAPED — read this before answering about people or work:
+- Every item has a STATUS (where the work has got to) and a MODE. Mode "Waiting on" means somebody else owes it and the user is monitoring; "Action" means it is the user's own. The two are independent: an item can be Blocked AND waiting on a named person. To answer "what am I waiting on from X", look for mode "Waiting on" with waitingOn = X, whatever the status says.
+- "contexts" are operational lenses — a geography, function, client or supplier. An item can carry several. Use them for questions like "what is happening in Spain" or "what relates to Supply".
+- "people" lists names, roles and how much each is holding. It deliberately contains NO performance, development or PDR material: that is confidential and is not available to you. If asked about someone's performance or development, say plainly that the system does not expose it to you — do not infer it from their overdue count.
+- Goal health is calculated from progress against the deadline, not from the percentage alone, so a goal can be most of the way there and still off track.
+- Project and mobilisation RAG is calculated from overdue work, blockers, how long since anything moved and how close the target is.
 WORKSPACE:
 ${serialiseForAI(data)}`;
 
@@ -3462,7 +3481,7 @@ export default function App({ auth }) {
       case "capture": return <Capture data={data} mutate={mutate} openItem={openItem} />;
       case "priorities": return <Priorities data={data} mutate={mutate} openItem={openItem} />;
       case "actions": return <ActionBoard data={data} mutate={mutate} openItem={openItem} newItem={newItem} />;
-      case "waiting": return <Waiting data={data} mutate={mutate} openItem={openItem} />;
+      case "waiting": return <Waiting data={data} mutate={mutate} openItem={openItem} go={go} />;
       case "kpis": return <KpiPage data={data} mutate={mutate} auth={auth} />;
       case "projects": return <Projects data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={projDetail} setDetail={setProjDetail} />;
       case "mobs": return <Mobilisations data={data} mutate={mutate} openItem={openItem} newItem={newItem} detail={mobDetail} setDetail={setMobDetail} />;

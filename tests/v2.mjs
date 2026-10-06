@@ -63,7 +63,7 @@ await page.route("**/api/ai", async (route) => {
 
 await page.goto(BASE);
 await page.waitForSelector(".nitem", { timeout: 25000 });
-const go = async (label) => { await page.locator(".nitem", { hasText: new RegExp("^" + label + "$") }).first().click(); await page.waitForTimeout(400); };
+const go = async (label) => { await page.locator(".nitem .lbl", { hasText: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$") }).first().click(); await page.waitForTimeout(400); };
 
 /* ---------- navigation ---------- */
 await soft("Every new screen is reachable and renders", async () => {
@@ -229,6 +229,22 @@ await soft("Completed work is in Archive, not lost", async () => {
   await go("Archive & History");
   if (!(await page.locator("text=Spain peak cover plan").count())) throw new Error("completed item is not in the archive");
   return true;
+});
+
+await soft("A completed ask leaves Waiting & Chasing", async () => {
+  await go("Waiting & Chasing");
+  const before = await page.locator(".tbl tbody tr").count();
+  if (!before) throw new Error("nothing is waiting, so this proves nothing");
+  // Complete the first waiting item from its row.
+  await page.locator(".tbl tbody tr td.click").first().click();
+  await page.waitForTimeout(600);
+  await page.locator('.modal select').nth(1).selectOption("Done");
+  await page.locator('button:text-is("Save changes")').click();
+  await page.waitForTimeout(800);
+  await go("Waiting & Chasing");
+  const after = await page.locator(".tbl tbody tr").count();
+  if (after >= before) throw new Error(`still ${after} rows (was ${before}) — a delivered ask stays on the chase list forever`);
+  return before + " → " + after;
 });
 
 /* ---------- portfolio ---------- */
