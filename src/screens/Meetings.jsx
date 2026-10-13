@@ -20,7 +20,7 @@ import React, { useState, useMemo } from "react";
 import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
 import { askClaude } from "../lib/claude";
 import {
-  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName,
+  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree,
 } from "../lib/model";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -262,7 +262,7 @@ ${meeting.notes}`;
         <F label="Title" span><input className="input" autoFocus={!meeting.title} value={meeting.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Spain weekly operational review" /></F>
         <F label="Date"><input type="date" className="input" value={meeting.date} onChange={(e) => set("date", e.target.value)} /></F>
         <F label="Type"><select className="select" value={meeting.type} onChange={(e) => set("type", e.target.value)}>{MEETING_TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
-        <F label="Project"><select className="select" value={meeting.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></F>
+        <F label="Project"><select className="select" value={meeting.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{projectTree(data).map(({ project: x, depth }) => <option key={x.id} value={x.id}>{"\u00a0\u00a0\u00a0".repeat(depth) + (depth ? "\u2514 " : "") + x.name}</option>)}</select></F>
         <F label="Mobilisation"><select className="select" value={meeting.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
       </div>
 

@@ -20,6 +20,7 @@ import {
   STATUSES, OPEN_STATUSES, LEGACY_STATUS, MODES, PRIORITIES, PRIO_LABEL, PRIO_HINT, LEGACY_PRIORITY,
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
+  childProjects, parentProject, isTopLevel, canParent, projectTree, descendantIds,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -245,6 +246,9 @@ const STYLES = `
 .pfnums .bad b { color:#FD0E33; }
 .pfnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
 .chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
+.chip.sub { background:#EFEAF8; border-color:#DCD2EF; color:#5B3FA0; }
+.crumb { font-size:12px; font-weight:700; color:#5C6675; cursor:pointer; }
+.crumb:hover { color:#112138; text-decoration:underline; }
 .chip.overdue { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; font-weight:700; }
 @media (max-width: 760px) { .pfrow { flex-direction:column; align-items:stretch; } .pfnums { justify-content:space-between; text-align:left; } }
 
@@ -396,6 +400,12 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 
 
 
+/* Project options in tree order, indented, so a strand sits visibly under
+   its umbrella instead of alphabetically adrift from it. */
+const projectOptions = (d, filter) => projectTree(d, filter).map(({ project, depth }) => (
+  <option key={project.id} value={project.id}>{"\u00a0\u00a0\u00a0".repeat(depth) + (depth ? "└ " : "") + project.name}</option>
+));
+
 /* helpers over data */
 const projName = (d, id) => (d.projects.find((p) => p.id === id) || {}).name || "";
 const mobName = (d, id) => (d.mobs.find((m) => m.id === id) || {}).name || "";
@@ -403,18 +413,21 @@ const parentLabel = (d, w) => w.project ? projName(d, w.project) : w.mob ? mobNa
 const openItems = (d) => d.workItems.filter((w) => OPEN_STATUSES.includes(w.status));
 const isOverdue = (w) => OPEN_STATUSES.includes(w.status) && w.due && daysUntil(w.due) < 0;
 
+/* One health calculation, not two. This was a second scoring function that
+   read p.rag — which is itself now derived from portfolioAttention — so it
+   both duplicated the logic and fed on its own output. It is now a thin
+   wrapper that adds the two counts the project page shows on top. */
 function projectHealth(d, p) {
-  const items = d.workItems.filter((w) => w.project === p.id);
-  const overdue = items.filter(isOverdue).length;
-  const critRisks = items.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status) && (w.extra?.rating === "Critical" || w.priority === "P1")).length;
-  const decis = items.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).length;
-  const stale = daysSince(p.updatedAt) > (d.settings.staleProject || 21);
-  let score = 0;
-  if (p.rag === "Red") score += 3; else if (p.rag === "Amber") score += 1;
-  score += Math.min(overdue, 3) + critRisks * 2 + Math.min(decis, 2) + (stale ? 2 : 0);
-  if (p.confidence === "Low") score += 2;
-  const label = score >= 6 ? "Intervention needed" : score >= 3 ? "Watch" : "Healthy";
-  return { score, label, overdue, critRisks, decis, stale };
+  const h = portfolioAttention(d, p, "project", d.settings);
+  const ids = new Set([p.id, ...descendantIds(d, p.id)]);
+  const items = d.workItems.filter((w) => ids.has(w.project) && OPEN_STATUSES.includes(w.status));
+  return {
+    ...h,
+    label: h.rag === "Red" ? "Intervention needed" : h.rag === "Amber" ? "Watch" : "Healthy",
+    critRisks: items.filter((w) => w.type === "Risk" && (w.extra?.rating === "Critical" || w.priority === "P1")).length,
+    decis: items.filter((w) => w.type === "Decision").length,
+    stale: h.stale !== null && h.stale > (d.settings.staleProject || 21),
+  };
 }
 function mobReadiness(m) {
   const cl = m.checklist || [];
@@ -540,7 +553,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Waiting on"><input className="input" list="people-list" value={w.waitingOn} onChange={(e) => set("waitingOn", e.target.value)} placeholder="Person / team" /></F>
           <datalist id="people-list">{data.people.map((p) => <option key={p.id} value={p.name} />)}</datalist>
           <F label="Due date"><input type="date" className="input" value={w.due} onChange={(e) => set("due", e.target.value)} /></F>
-          <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></F>
+          <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{projectOptions(data)}</select></F>
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
           <F label="Description" span><textarea className="ta" value={w.description} onChange={(e) => set("description", e.target.value)} /></F>
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
@@ -1004,7 +1017,7 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
         <input className="input" placeholder="Search…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
         <select className="select" value={f.owner} onChange={(e) => setF({ ...f, owner: e.target.value })}><option value="">Person: all</option>{owners.map((o) => <option key={o}>{o}</option>)}</select>
         <select className="select" value={f.project} onChange={(e) => setF({ ...f, project: e.target.value })}><option value="">Project/Mob: all</option>
-          {data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {projectOptions(data)}
           {data.mobs.map((m) => <option key={m.id} value={m.id}>[Mob] {m.name}</option>)}</select>
         <select className="select" value={f.context} onChange={(e) => setF({ ...f, context: e.target.value })}><option value="">Context: all</option>{data.contexts.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <select className="select" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">Type: all</option>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
@@ -1225,7 +1238,7 @@ function emptyProject(settings) {
   return { id: uid(), name: "", code: "", objective: "", owner: "", sponsor: "", stage: "Idea", rag: "Green",
     start: todayISO(), target: "", forecast: "", progress: 0, confidence: "Medium", position: "",
     nextMilestone: "", nextMilestoneDate: "", contexts: [...(settings.defaultContexts || [])],
-    blocked: false, blockedBy: "", blocker: "", updatedAt: todayISO() };
+    parentId: "", blocked: false, blockedBy: "", blocker: "", updatedAt: todayISO() };
 }
 function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
   useEscape(onClose);
@@ -1238,6 +1251,12 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
         <h3 className="h1">{isNew ? "New project" : "Edit project"}</h3>
         <div className="frow" style={{ marginTop: 10 }}>
           <F label="Project name" span><input className="input" autoFocus value={p.name} onChange={(e) => set("name", e.target.value)} /></F>
+          <F label="Part of (leave blank for a top-level project)" span>
+            <select className="select" value={p.parentId || ""} onChange={(e) => set("parentId", e.target.value)}>
+              <option value="">— a project in its own right —</option>
+              {projectTree(data, (x) => x.id !== p.id && canParent(data, p.id, x.id))
+                .map(({ project: x, depth }) => <option key={x.id} value={x.id}>{"\u00a0\u00a0".repeat(depth) + (depth ? "└ " : "") + x.name}</option>)}
+            </select></F>
           <F label="Code"><input className="input" value={p.code} onChange={(e) => set("code", e.target.value)} /></F>
           <F label="Owner"><input className="input" value={p.owner} onChange={(e) => set("owner", e.target.value)} /></F>
           <F label="Sponsor"><input className="input" value={p.sponsor} onChange={(e) => set("sponsor", e.target.value)} /></F>
@@ -1311,6 +1330,11 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
     const h = projectHealth(data, p);
     const updates = data.updates.filter((u) => u.project === p.id).sort((a, b) => b.date.localeCompare(a.date));
     const lessons = (data.lessons || []).filter((l) => l.project === p.id);
+    const kids = childProjects(data, p.id);
+    /* Work filed against a strand belongs to the umbrella too, so a parent
+       never reads as having nothing going on. */
+    const subIds = descendantIds(data, p.id);
+    const allItems = subIds.size ? data.workItems.filter((w) => w.project === p.id || subIds.has(w.project)) : items;
     const addUpdate = () => {
       if (!updText.trim()) return;
       mutate((d) => {
@@ -1325,10 +1349,16 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         `Owner: ${p.owner || "(missing)"} · Target: ${fmtD(p.target)} · Forecast: ${fmtD(p.forecast) || "(missing)"}`, ``,
         `## Objective`, p.objective || "(missing)", ``, `## Current position`, p.position || "(missing — flag: no current position recorded)", ``,
         `## Next milestone`, p.nextMilestone ? `${p.nextMilestone} — ${fmtD(p.nextMilestoneDate)}` : "(missing — flag: no next milestone)", ``,
-        `## Open actions (${items.filter((w) => OPEN_STATUSES.includes(w.status) && !["Risk", "Decision"].includes(w.type)).length})`,
-        ...items.filter((w) => OPEN_STATUSES.includes(w.status) && !["Risk", "Decision"].includes(w.type)).map((w) => `- ${w.title} — ${w.status}${w.due ? ", due " + fmtD(w.due) : ""}${isOverdue(w) ? " (OVERDUE)" : ""}`),
-        ``, `## Open risks`, ...(items.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} (${w.extra?.rating || "unrated"})${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : " — NO MITIGATION"}`)),
-        ``, `## Decisions outstanding`, ...(items.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}`)),
+        ...(kids.length ? [`## Sub-projects (${kids.length})`,
+          ...kids.map((c) => {
+            const ch = portfolioAttention(data, c, "project", data.settings);
+            return `- **${c.name}** — ${c.stage}, ${ch.rag}, ${c.progress}%${c.owner ? ", " + c.owner : ""}${c.target ? ", target " + fmtD(c.target) : ""}` +
+              (ch.reasons.length ? `\n  ${ch.reasons.join("; ")}` : "");
+          }), ``] : []),
+        `## Open actions (${allItems.filter((w) => OPEN_STATUSES.includes(w.status) && !["Risk", "Decision"].includes(w.type)).length})`,
+        ...allItems.filter((w) => OPEN_STATUSES.includes(w.status) && !["Risk", "Decision"].includes(w.type)).map((w) => `- ${w.title} — ${w.status}${w.due ? ", due " + fmtD(w.due) : ""}${isOverdue(w) ? " (OVERDUE)" : ""}${w.project !== p.id ? "  [" + projName(data, w.project) + "]" : ""}`),
+        ``, `## Open risks`, ...(allItems.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} (${w.extra?.rating || "unrated"})${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : " — NO MITIGATION"}`)),
+        ``, `## Decisions outstanding`, ...(allItems.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}`)),
         ``, `## Latest updates`, ...updates.slice(0, 3).map((u) => `- ${fmtD(u.date)}: ${u.summary}`),
         ``, `_Generated ${fmtD(todayISO())} from CMAC Operations Command Centre._`].join("\n");
       copyText(t); askInfo("Project report copied to clipboard as Markdown.");
@@ -1337,11 +1367,14 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
       <div>
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
           <button className="btn sm" onClick={back}>← Portfolio</button>
+          {parentProject(data, p) && (
+            <span className="crumb" onClick={() => setDetail(p.parentId)}>{parentProject(data, p).name} /</span>)}
           <h2 className="h1" style={{ margin: 0 }}><Rag v={p.rag} />{p.name} <span className="mono">{p.code}</span></h2>
           <span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>Health: {h.label}</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button className="btn sm" onClick={() => setEditing(p)}>Edit project</button>
+            <button className="btn sm" onClick={() => setEditing({ ...emptyProject(data.settings), parentId: p.id })}>+ Sub-project</button>
             <button className="btn sm" onClick={() => newItem({ project: p.id })}>+ Work item</button>
             <button className="btn sm pri" onClick={report}>Generate report</button>
           </span>
@@ -1374,6 +1407,38 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
             </div>
           </div>
         </div>
+        {kids.length > 0 && <>
+          <div className="h2">Sub-projects ({kids.length})</div>
+          <p className="sub">Each one is a project in its own right — its own stage, owner, dates, updates and work items. Open one to work on it.</p>
+          {kids.map((c) => {
+            const ch = portfolioAttention(data, c, "project", data.settings);
+            const cItems = data.workItems.filter((w) => w.project === c.id && isOpen(w));
+            const left = c.target ? daysUntil(c.target) : null;
+            return (
+              <div key={c.id} className={"pfrow " + ch.rag.toLowerCase()} onClick={() => setDetail(c.id)}>
+                <div className="pfmain">
+                  <div className="pftop">
+                    <Rag v={ch.rag} />
+                    <span className="pfname">{c.name}</span>
+                    <span className="chip">{c.stage}</span>
+                    {c.blocked && <span className="chip blocked">blocked</span>}
+                    {c.owner && <span className="chip">{c.owner}</span>}
+                  </div>
+                  <div className="pfwhy">{ch.reasons.length ? ch.reasons.join(" · ") : (c.position || "Nothing outstanding")}</div>
+                </div>
+                <div className="pfnums">
+                  <div><b>{cItems.length}</b><i>open</i></div>
+                  <div className={ch.overdue ? "bad" : ""}><b>{ch.overdue}</b><i>overdue</i></div>
+                  <div><b>{c.progress}%</b><i>progress</i></div>
+                  <div><b>{left === null ? "—" : left < 0 ? `${Math.abs(left)}d late` : `${left}d`}</b><i>to target</i></div>
+                </div>
+              </div>);
+          })}
+        </>}
+        {!kids.length && !p.parentId && (
+          <div className="sub" style={{ marginTop: 14 }}>
+            Work with several distinct strands — each needing its own scoping, build and rollout — is better held as sub-projects than as a long list of actions. Use <b>+ Sub-project</b> above.
+          </div>)}
         <div className="h2">Add update</div>
         <div className="card"><div style={{ display: "flex", gap: 8 }}>
           <input className="input" value={updText} onChange={(e) => setUpdText(e.target.value)} placeholder="What moved, what's the position now, what's next…" onKeyDown={(e) => e.key === "Enter" && addUpdate()} />
@@ -1382,8 +1447,8 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         <div className="h2">Updates ({updates.length})</div>
         {updates.map((u) => <div key={u.id} className="checkline"><span className="mono" style={{ width: 74 }}>{fmtD(u.date)}</span><Rag v={u.rag} /><span style={{ flex: 1 }}>{u.summary}</span>{u.flags.board && <span className="chip">board</span>}{u.flags.coo && <span className="chip">coo</span>}{u.flags.news && <span className="chip">news</span>}</div>)}
         {!updates.length && <div className="sub">No updates yet.</div>}
-        <div className="h2">Linked work items ({items.length})</div>
-        <ItemsTable data={data} rows={items} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
+        <div className="h2">Work items ({allItems.length}{subIds.size ? ` — ${items.length} here, ${allItems.length - items.length} in sub-projects` : ""})</div>
+        <ItemsTable data={data} rows={allItems} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
         {lessons.length > 0 && <><div className="h2">Lessons learned</div>{lessons.map((l) => <div key={l.id} className="checkline"><span style={{ flex: 1 }}>{l.title}</span><span className="chip">{l.status}</span></div>)}</>}
         {editing && <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />}
       </div>
@@ -1857,7 +1922,7 @@ function boardSources(data, section) {
     case "wins": return [
       ...data.updates.filter((u) => u.flags.board && u.rag === "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
       ...done30.filter((w) => w.flags.board).map((w) => ({ id: "w" + w.id, text: `${w.title}${w.outcome ? " — " + w.outcome : ""}` }))];
-    case "projects": return data.projects.filter((p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map((p) => ({ id: "p" + p.id, text: `${p.name} (${portfolioAttention(data, p, "project", data.settings).rag}, ${p.progress}%): ${p.position || "no position recorded"}${p.nextMilestone ? " Next: " + p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")." : ""}` }));
+    case "projects": return projectTree(data, (p) => !["Closed", "Cancelled", "Idea"].includes(p.stage)).map(({ project: p, depth }) => ({ id: "p" + p.id, text: `${depth ? "— " : ""}${p.name} (${portfolioAttention(data, p, "project", data.settings).rag}, ${p.progress}%): ${p.position || "no position recorded"}${p.nextMilestone ? " Next: " + p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")." : ""}` }));
     case "mobs": return data.mobs.filter((m) => m.stage !== "Closed").map((m) => { const r = mobReadiness(m); return { id: "m" + m.id, text: `${m.name} (${portfolioAttention(data, m, "mob", data.settings).rag}): ${r.pct}% ready, go-live ${fmtD(m.goLive)}. ${m.position || ""}` }; });
     case "concerns": return [
       ...data.updates.filter((u) => u.flags.board && u.rag !== "Green").map((u) => ({ id: "u" + u.id, text: `${u.title}: ${u.summary}` })),
@@ -2597,6 +2662,16 @@ function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   const [q, setQ] = useState("");
   const [openPanel, setOpenPanel] = useState(false);
   const [ai, setAi] = useState({ busy: false, answer: "" });
+  /* Close on a click anywhere else. Without this the results panel sat over
+     the toolbar until it was dismissed by hand, swallowing clicks on the
+     buttons underneath it. */
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!openPanel) return;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpenPanel(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [openPanel]);
   const results = useMemo(() => {
     if (!q || q.length < 2) return { items: [], projects: [], mobs: [] };
     const t = q.toLowerCase();
@@ -2617,7 +2692,7 @@ function SearchBox({ data, openItem, go, setProjDetail, setMobDetail }) {
   };
   const any = results.items.length + results.projects.length + results.mobs.length > 0;
   return (
-    <div className="searchwrap" style={{ position: "relative", width: "min(360px, 100%)" }}>
+    <div className="searchwrap" ref={wrapRef} style={{ position: "relative", width: "min(360px, 100%)" }}>
       <input className="input" placeholder="Search everything, or ask a question…" value={q}
         onChange={(e) => { setQ(e.target.value); setOpenPanel(true); setAi({ busy: false, answer: "" }); }}
         onFocus={() => setOpenPanel(true)}

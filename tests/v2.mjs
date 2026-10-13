@@ -208,6 +208,8 @@ await soft("Confidential people data never reaches the AI brief", async () => {
   if (/CONFIDENTIALSTRENGTH|CONFIDENTIALDEV/.test(sent)) throw new Error("PERSONAL DATA LEAKED into the AI request");
   if (!/Carlos Mendez/.test(sent)) throw new Error("the person is missing entirely — the fence is too wide");
   await page.unroute("**/api/ai", probe);
+  await page.locator("body").click({ position: { x: 700, y: 600 } });
+  await page.waitForTimeout(250);
   return "name present, development notes absent";
 });
 
@@ -255,6 +257,99 @@ await soft("Portfolio spans projects and mobilisations in one list", async () =>
   const stats = await page.locator(".stat").count();
   if (stats < 4) throw new Error("summary stats missing");
   return true;
+});
+
+/* ---------- project hierarchy ---------- */
+await soft("A project can be given sub-projects, each a project in its own right", async () => {
+  await go("Portfolio");
+  await page.locator('button:text-is("+ New project")').click();
+  await page.waitForSelector(".modal", { timeout: 8000 });
+  await page.locator(".modal input.input").first().fill("WhatsApp Integration");
+  await page.locator('.modal button:text-is("Create project")').click();
+  await page.waitForTimeout(800);
+  if (!(await page.locator('button:text-is("+ Sub-project")').count())) throw new Error("no + Sub-project button on the detail page");
+  for (const name of ["Automate driver details", "Large vehicle recruiting"]) {
+    await page.locator('button:text-is("+ Sub-project")').click();
+    await page.waitForSelector(".modal", { timeout: 8000 });
+    await page.locator(".modal input.input").first().fill(name);
+    await page.locator('.modal button:text-is("Create project")').click();
+    await page.waitForTimeout(800);
+    // Creating a sub-project lands on IT, so go back up via the breadcrumb.
+    await page.locator(".crumb").first().click();
+    await page.waitForTimeout(600);
+  }
+  const txt = await page.locator(".h2", { hasText: /^Sub-projects/ }).innerText();
+  if (!/\(2\)/.test(txt)) throw new Error("expected 2 sub-projects, got: " + txt);
+  return txt;
+});
+
+await soft("A sub-project opens with its own updates and work items", async () => {
+  await page.locator('.pfrow:has-text("Automate driver details")').first().click();
+  await page.waitForTimeout(700);
+  const h = await page.locator(".h1").first().innerText();
+  if (!/Automate driver details/.test(h)) throw new Error("landed on " + h);
+  for (const section of ["Add update", "Work items"]) {
+    if (!(await page.locator(".h2", { hasText: new RegExp("^" + section) }).count())) throw new Error("no " + section + " section");
+  }
+  await page.locator('input[placeholder*="What moved"]').fill("Scoped the flow with Devs");
+  await page.locator('button:text-is("Add")').first().click();
+  await page.waitForTimeout(700);
+  if (!(await page.locator("text=Scoped the flow with Devs").count())) throw new Error("the strand kept no update of its own");
+  return true;
+});
+
+await soft("The breadcrumb goes back up to the umbrella", async () => {
+  await page.locator(".crumb").first().click();
+  await page.waitForTimeout(600);
+  const h = await page.locator(".h1").first().innerText();
+  if (!/WhatsApp Integration/.test(h)) throw new Error("landed on " + h);
+  return true;
+});
+
+await soft("Portfolio shows the umbrella, not each strand", async () => {
+  await go("Portfolio");
+  await page.waitForTimeout(400);
+  const umbrella = page.locator('.pfrow:has-text("WhatsApp Integration")');
+  if (await umbrella.count() !== 1) throw new Error("expected the umbrella once, got " + (await umbrella.count()));
+  if (await page.locator('.pfrow:has-text("Automate driver details")').count()) throw new Error("a strand is listed separately at the top level");
+  const chip = await umbrella.locator(".chip.sub").innerText().catch(() => "");
+  if (!/2 sub-project/.test(chip)) throw new Error("sub-project chip reads: " + JSON.stringify(chip));
+  return chip;
+});
+
+await soft("…and can be expanded to list them", async () => {
+  await page.locator('label:has-text("List sub-projects separately") input').check();
+  await page.waitForTimeout(500);
+  const rows = await page.locator(".pfrow").allInnerTexts();
+  if (!rows.some((r) => /Automate driver details/.test(r))) throw new Error("strands still hidden");
+  if (!rows.some((r) => /under WhatsApp Integration/.test(r))) throw new Error("a strand does not say what it is under");
+  await page.locator('label:has-text("List sub-projects separately") input').uncheck();
+  await page.waitForTimeout(400);
+  return true;
+});
+
+await soft("A work item can be filed against a strand, and rolls up to the umbrella", async () => {
+  await page.locator('.pfrow:has-text("WhatsApp Integration")').first().click();
+  await page.waitForTimeout(700);
+  await page.locator('button:text-is("+ Work item")').click();
+  await page.waitForSelector(".modal", { timeout: 8000 });
+  await page.locator('.modal input.input').first().fill("Build the driver details form");
+  // Re-point it from the umbrella to the strand. Select by its label, not by
+  // index: the field order in this modal has already changed twice. The
+  // option text carries tree indentation, so match on value, not label.
+  const sel = page.locator('.modal div:has(> label.flab:text-is("Project")) select').first();
+  const value = await sel.evaluate((el) => {
+    const o = [...el.options].find((x) => x.textContent.includes("Automate driver details"));
+    return o ? o.value : "";
+  });
+  if (!value) throw new Error("the strand is not offered in the project picker");
+  await sel.selectOption(value);
+  await page.locator('.modal button:text-is("Create work item")').click();
+  await page.waitForTimeout(900);
+  const hdr = await page.locator(".h2", { hasText: /^Work items/ }).innerText();
+  if (!/in sub-projects/i.test(hdr)) throw new Error("the umbrella does not account for strand work: " + hdr);
+  if (!(await page.locator("text=Build the driver details form").count())) throw new Error("item not shown on the umbrella");
+  return hdr;
 });
 
 /* ---------- OKRs ---------- */

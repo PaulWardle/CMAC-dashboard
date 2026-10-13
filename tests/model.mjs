@@ -1,7 +1,9 @@
 /* Proves the v1 → v2 migration on a document shaped like the real stored
    one. This is the riskiest code in the change: it runs once, in place,
    against data that cannot be recovered if it gets it wrong. */
-import { migrate, isWaiting, isOpen, personLoad, okrHealth, itemAttention, portfolioAttention, dueBadge, subtaskProgress, todayISO } from "../src/lib/model.js";
+import { migrate, isWaiting, isOpen, personLoad, okrHealth, itemAttention, portfolioAttention, dueBadge, subtaskProgress, todayISO,
+  childProjects, parentProject, isTopLevel, canParent, projectTree, descendantIds,
+  PROJECT_STAGES, LEGACY_STAGES } from "../src/lib/model.js";
 
 let fails = 0;
 const P = (n, ok, x = "") => { console.log((ok ? "PASS  " : "FAIL  ") + n + (x ? "  — " + x : "")); if (!ok) fails++; };
@@ -133,6 +135,77 @@ P("Reaching the target completes it",
   okrHealth({ baseline: 0, current: 100, target: 100, start: d(-50), deadline: d(50) }) === "Completed");
 P("No numbers means no invented health",
   okrHealth({ baseline: "", current: "", target: "" }) === "Not started");
+
+/* ============================================================
+   Project hierarchy — an umbrella over its strands
+   ============================================================ */
+const H = () => {
+  const mk = (id, name, parentId, over = {}) => ({
+    id, name, parentId, stage: "Delivery", rag: "", ragOverride: "", progress: 0, owner: "",
+    target: "", updatedAt: todayISO(), contexts: [], checklist: [], ...over });
+  return migrate({
+    v: 3, settings: { displayName: "Paul Wardle", staleProject: 21, staleMob: 7, defaultContexts: [] },
+    contexts: [], people: [], okrs: [], meetings: [], sources: [],
+    projects: [
+      mk("umb", "WhatsApp Integration", ""),
+      mk("s1", "Automate driver details", "umb"),
+      mk("s2", "Large vehicle recruiting", "umb", { target: d(-10) }),
+      mk("s3", "Passenger contact", "umb"),
+      mk("solo", "Italy market entry", ""),
+    ],
+    mobs: [], updates: [], lessons: [], workItems: [
+      { id: "w1", title: "Scope the flow", status: "Planned", mode: "Action", priority: "P2", project: "s1",
+        owner: "Paul Wardle", waitingOn: "", due: d(-4), created: d(-20), updatedAt: d(-2), contexts: [], flags: {}, notes: [], extra: {} },
+      { id: "w2", title: "Umbrella governance", status: "Planned", mode: "Action", priority: "P3", project: "umb",
+        owner: "Paul Wardle", waitingOn: "", due: "", created: d(-5), updatedAt: d(-1), contexts: [], flags: {}, notes: [], extra: {} },
+    ],
+    context: {},
+  }).data;
+};
+const hd = H();
+const proj = (id) => hd.projects.find((p) => p.id === id);
+
+P("A project can belong to another one", proj("s1").parentId === "umb");
+P("Children are found from the parent", childProjects(hd, "umb").length === 3);
+P("The parent is found from the child", parentProject(hd, proj("s1")).name === "WhatsApp Integration");
+P("Only the umbrella is top level", isTopLevel(hd, proj("umb")) && !isTopLevel(hd, proj("s1")));
+P("The tree reads in order with a depth per level",
+  projectTree(hd).map((x) => x.depth).join("") === "01110", projectTree(hd).map((x) => x.project.name + "@" + x.depth).join(" | "));
+P("Every strand is a descendant", descendantIds(hd, "umb").size === 3);
+
+/* Cycles: the picker must refuse them, and a stored one must not hang. */
+P("A project cannot be its own parent", canParent(hd, "umb", "umb") === false);
+P("A parent cannot be moved under its own child", canParent(hd, "umb", "s1") === false);
+P("An unrelated project is a valid parent", canParent(hd, "solo", "umb") === true);
+P("A stored cycle is cut rather than left to hang", (() => {
+  const bad = JSON.parse(JSON.stringify(hd));
+  bad.projects.find((p) => p.id === "umb").parentId = "s1";   // umb -> s1 -> umb
+  const fixed = migrate(bad).data;
+  return fixed.projects.find((p) => p.id === "umb").parentId === "";
+})());
+P("A parent that no longer exists is cleared", (() => {
+  const bad = JSON.parse(JSON.stringify(hd));
+  bad.projects.find((p) => p.id === "solo").parentId = "ghost";
+  return migrate(bad).data.projects.find((p) => p.id === "solo").parentId === "";
+})());
+
+/* Roll-up: the umbrella answers for its strands. */
+const uh = portfolioAttention(hd, proj("umb"), "project", hd.settings);
+P("A strand's open work counts as the umbrella's", uh.open === 2, uh.open + " items across the tree");
+P("A strand's overdue work reaches the umbrella", uh.overdue === 1);
+P("The umbrella reports how many strands need attention",
+  uh.reasons.some((r) => /sub-project/.test(r)), uh.reasons.join("; "));
+P("An umbrella is never greener than its worst strand",
+  uh.score >= portfolioAttention(hd, proj("s2"), "project", hd.settings).score);
+P("A strand answers only for itself",
+  portfolioAttention(hd, proj("s3"), "project", hd.settings).open === 0);
+P("A project with strands is not flagged as having no open actions",
+  !portfolioAttention(hd, proj("umb"), "project", hd.settings).reasons.some((r) => /no open actions/.test(r)));
+
+/* Hypercare is a project stage again. */
+P("Hypercare is available as a project stage", PROJECT_STAGES.includes("Hypercare"));
+P("Rollout is available as a project stage", PROJECT_STAGES.includes("Rollout"));
+P("Hypercare is no longer force-mapped to Delivery", LEGACY_STAGES["Hypercare"] === undefined);
 
 console.log("\n" + "=".repeat(54) + "\n" + (fails ? fails + " FAILED" : "all passed"));
 process.exit(fails ? 1 : 0);

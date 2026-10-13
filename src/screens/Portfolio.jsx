@@ -13,7 +13,7 @@
    ============================================================ */
 import React, { useState, useMemo } from "react";
 import { Rag, Stat, Empty, fmtD } from "../ui";
-import { portfolioAttention, ctxNames, daysUntil, isOpen, isOverdue, prioRank } from "../lib/model";
+import { portfolioAttention, ctxNames, daysUntil, isOpen, isOverdue, prioRank, childProjects, isTopLevel, descendantIds } from "../lib/model";
 
 const SORTS = {
   "Needs me": (a, b) => b.h.score - a.h.score,
@@ -27,6 +27,7 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
   const [ctx, setCtx] = useState("");
   const [kind, setKind] = useState("All");
   const [showClosed, setShowClosed] = useState(false);
+  const [showSubs, setShowSubs] = useState(false);
 
   const rows = useMemo(() => {
     const build = (e, k) => ({
@@ -35,14 +36,14 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
       target: k === "mob" ? e.goLive : e.target,
     });
     let all = [
-      ...data.projects.map((p) => build(p, "project")),
+      ...data.projects.filter((p) => showSubs || isTopLevel(data, p)).map((p) => build(p, "project")),
       ...data.mobs.map((m) => build(m, "mob")),
     ];
     if (!showClosed) all = all.filter((r) => !["Closed", "Cancelled"].includes(r.e.stage));
     if (kind !== "All") all = all.filter((r) => r.kind === (kind === "Projects" ? "project" : "mob"));
     if (ctx) all = all.filter((r) => (r.e.contexts || []).includes(ctx));
     return all.sort(SORTS[sort] || SORTS["Needs me"]);
-  }, [data, sort, ctx, kind, showClosed]);
+  }, [data, sort, ctx, kind, showClosed, showSubs]);
 
   const red = rows.filter((r) => r.h.rag === "Red").length;
   const amber = rows.filter((r) => r.h.rag === "Amber").length;
@@ -78,6 +79,9 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
         <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}>
           <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> Include closed
         </label>
+        <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}>
+          <input type="checkbox" checked={showSubs} onChange={(e) => setShowSubs(e.target.checked)} /> List sub-projects separately
+        </label>
       </div>
 
       {!rows.length && <Empty>Nothing in flight{ctx ? " in that context" : ""}. Add a project or a mobilisation and it will appear here.</Empty>}
@@ -93,6 +97,8 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
                 <span className="chip">{k === "mob" ? "Mobilisation" : "Project"}</span>
                 <span className="chip">{e.stage}</span>
                 {e.blocked && <span className="chip blocked">blocked</span>}
+                {h.children > 0 && <span className="chip sub">{h.children} sub-project{h.children > 1 ? "s" : ""}{h.needyChildren ? ` · ${h.needyChildren} need attention` : ""}</span>}
+                {k === "project" && !isTopLevel(data, e) && <span className="chip">under {(data.projects.find((x) => x.id === e.parentId) || {}).name}</span>}
                 {ctxNames(data, e.contexts).map((c) => <span key={c} className="chip ctx">{c}</span>)}
               </div>
               {/* The reasons, in plain words. A health score you cannot

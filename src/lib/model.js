@@ -99,10 +99,16 @@ const LEGACY_WORKSTREAMS = {
   "Aviation": "Operations", "Rail": "Operations", "Supply": "Supply",
 };
 
-export const PROJECT_STAGES = ["Idea", "Scoping", "Planning", "Delivery", "Closed", "On Hold", "Cancelled"];
+/* Hypercare is back. It was taken out as belonging to a mobilisation's
+   lifecycle rather than a project's, which was wrong for the rollout-shaped
+   work that most sub-projects turn out to be: scope it, build it, roll it
+   out, then nurse it. Anything already moved from Hypercare to Delivery by
+   the earlier migration stays where it is — it is not moved back, because
+   there is no way to tell which of them had genuinely finished. */
+export const PROJECT_STAGES = ["Idea", "Scoping", "Planning", "Delivery", "Rollout", "Hypercare", "Closed", "On Hold", "Cancelled"];
 export const LEGACY_STAGES = {
   "Discovery": "Scoping", "Definition": "Scoping", "Implementation": "Delivery",
-  "Hypercare": "Delivery", "BAU Handover": "Delivery",
+  "BAU Handover": "Delivery",
 };
 export const MOB_STAGES = ["Scoping", "Preparing & Planning", "Ready", "Go-live", "Hypercare", "Closed"];
 export const LEGACY_MOB_STAGES = {
@@ -210,11 +216,59 @@ export function itemAttention(w, settings = {}) {
   return { score: Math.round(score), reasons };
 }
 
+/* ---------- project hierarchy ----------
+   A big piece of work is usually an umbrella over several strands, each
+   with its own scope, owner, dates and lifecycle. Rather than invent a
+   second entity that would need its own updates, risks and reports, a
+   project can simply belong to another one. A strand IS a project. */
+export const childProjects = (d, id) => d.projects.filter((p) => p.parentId === id);
+export const parentProject = (d, p) => (p && p.parentId ? d.projects.find((x) => x.id === p.parentId) : null);
+export const isTopLevel = (d, p) => !p.parentId || !d.projects.some((x) => x.id === p.parentId);
+
+/* Every project beneath this one, at any depth. The visited set is not
+   paranoia: a saved document could hold a cycle from an older build, and an
+   unguarded walk would hang the whole app rather than show a wrong number. */
+export function descendantIds(d, id, seen = new Set()) {
+  childProjects(d, id).forEach((c) => {
+    if (seen.has(c.id)) return;
+    seen.add(c.id);
+    descendantIds(d, c.id, seen);
+  });
+  return seen;
+}
+/* Whether `parentId` may become `child`'s parent: not itself, and not
+   something already underneath it. */
+export function canParent(d, childId, parentId) {
+  if (!parentId) return true;
+  if (parentId === childId) return false;
+  return !descendantIds(d, childId).has(parentId);
+}
+/* Top-level projects first, each followed by its own subtree, so a list can
+   be rendered in reading order with an indent per level. */
+export function projectTree(d, filter = () => true) {
+  const out = [];
+  const walk = (p, depth, seen) => {
+    if (seen.has(p.id)) return;
+    seen.add(p.id);
+    if (filter(p)) out.push({ project: p, depth });
+    childProjects(d, p.id).forEach((c) => walk(c, depth + 1, seen));
+  };
+  const seen = new Set();
+  d.projects.filter((p) => isTopLevel(d, p)).forEach((p) => walk(p, 0, seen));
+  /* Anything orphaned by a cycle still has to appear somewhere. */
+  d.projects.forEach((p) => { if (!seen.has(p.id) && filter(p)) out.push({ project: p, depth: 0 }); });
+  return out;
+}
+
 /* A project or mobilisation's health, from its own facts plus the work
    filed under it. Returns a RAG so the portfolio can be scanned at a
-   glance, and the reasons so it can be challenged. */
+   glance, and the reasons so it can be challenged.
+
+   An umbrella project answers for its strands: their open work counts as
+   its own, and a red strand cannot hide under a green parent. */
 export function portfolioAttention(d, entity, kind, settings = {}) {
-  const items = d.workItems.filter((w) => (kind === "project" ? w.project : w.mob) === entity.id && isOpen(w));
+  const ids = kind === "project" ? new Set([entity.id, ...descendantIds(d, entity.id)]) : new Set([entity.id]);
+  const items = d.workItems.filter((w) => ids.has(kind === "project" ? w.project : w.mob) && isOpen(w));
   const overdue = items.filter(isOverdue);
   const blockedItems = items.filter((w) => w.status === "Blocked");
   const reasons = [];
@@ -235,10 +289,24 @@ export function portfolioAttention(d, entity, kind, settings = {}) {
   else if (left !== null && left <= 14 && kind === "mob") { score += 14; reasons.push(`go-live in ${left} days`); }
   else if (left !== null && left <= 7) { score += 10; reasons.push(`target in ${left} days`); }
 
-  if (!items.length && !["Closed", "Cancelled", "Idea"].includes(entity.stage)) { score += 8; reasons.push("no open actions"); }
+  const kids = kind === "project" ? childProjects(d, entity.id) : [];
+  if (!items.length && !kids.length && !["Closed", "Cancelled", "Idea"].includes(entity.stage)) { score += 8; reasons.push("no open actions"); }
+
+  /* Roll the strands up. A parent takes the worst child's score if that is
+     higher than its own, so an umbrella never reads healthier than the
+     worst thing underneath it. */
+  let worstChild = 0, needy = 0;
+  kids.forEach((c) => {
+    if (["Closed", "Cancelled"].includes(c.stage)) return;
+    const h = portfolioAttention(d, c, "project", settings);
+    if (h.score > worstChild) worstChild = h.score;
+    if (h.rag !== "Green") needy++;
+  });
+  if (needy) reasons.push(`${needy} of ${kids.length} sub-project${kids.length > 1 ? "s" : ""} need${needy === 1 ? "s" : ""} attention`);
+  score = Math.max(score, worstChild);
 
   const rag = entity.ragOverride || (score >= 45 ? "Red" : score >= 20 ? "Amber" : "Green");
-  return { score: Math.round(score), rag, reasons, overdue: overdue.length, blocked: blockedItems.length, open: items.length, stale };
+  return { score: Math.round(score), rag, reasons, overdue: overdue.length, blocked: blockedItems.length, open: items.length, stale, children: kids.length, needyChildren: needy };
 }
 
 /* An OKR is not healthy because it is 80% done. It is healthy when
@@ -388,7 +456,14 @@ export function migrate(d) {
   /* --- projects and mobilisations --- */
   d.projects.forEach((p) => {
     if (remap(p, "stage", LEGACY_STAGES)) changed = true;
+    if (p.parentId === undefined) { p.parentId = ""; changed = true; }
     absorb(p);
+  });
+  /* A parent that no longer exists, or a cycle from hand-edited data, would
+     strand a project out of every list. Cut the link rather than lose it. */
+  d.projects.forEach((p) => {
+    if (!p.parentId) return;
+    if (!d.projects.some((x) => x.id === p.parentId) || !canParent(d, p.id, p.parentId)) { p.parentId = ""; changed = true; }
   });
   d.mobs.forEach((m) => {
     if (remap(m, "stage", LEGACY_MOB_STAGES)) changed = true;
@@ -462,6 +537,14 @@ export function migrate(d) {
   /* Benefits was never built out past its data shape. Carrying an empty
      feature forward costs a nav entry and a screen nobody opens. */
   if (d.benefits && d.benefits.length === 0) { delete d.benefits; changed = true; }
+
+  /* Derived health is written on load as well as on every edit, so a
+     document that has just been opened and not yet touched still shows a
+     colour rather than a blank dot. */
+  [...d.projects.map((p) => [p, "project"]), ...d.mobs.map((m) => [m, "mob"])].forEach(([e, kind]) => {
+    const rag = portfolioAttention(d, e, kind, d.settings || {}).rag;
+    if (e.rag !== rag) { e.rag = rag; changed = true; }
+  });
 
   if (d.v !== 3) { d.v = 3; changed = true; }
   return { data: d, changed };
