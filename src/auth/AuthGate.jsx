@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { isConfigured, getSession, onAuthChange, signInWithPassword, signUpWithPassword, fetchProfile, signOut } from "../lib/auth";
-import { ALLOWED_EMAIL_DOMAIN, isAllowedEmail } from "../lib/config";
+import { ALLOWED_EMAIL_DOMAIN, ADMIN_NAME, isAllowedEmail } from "../lib/config";
 import App from "../App";
 
 /* Brand palette — from the CMAC brand guidelines */
@@ -111,7 +111,7 @@ function Login({ onSignedIn }) {
       </h1>
       <p style={{ color: MUT, fontSize: 13.5, fontWeight: 600, margin: "0 0 26px", lineHeight: 1.5 }}>
         {isReg
-          ? "Create your account with your work email. Access starts once Paul Wardle approves your request."
+          ? `Create your account with your work email. Access starts once ${ADMIN_NAME} approves your request.`
           : "One source of truth for actions, projects, mobilisations and reporting."}
       </p>
 
@@ -148,7 +148,7 @@ function Login({ onSignedIn }) {
         <div style={{ marginTop: 16, fontSize: 12, color: MUT, fontWeight: 600, textAlign: "center", lineHeight: 1.6 }}>
           {isReg
             ? "New accounts are view-only until approved."
-            : "You'll stay signed in on this device. Forgotten password? Contact Paul Wardle."}
+            : `You'll stay signed in on this device. Forgotten password? Contact ${ADMIN_NAME}.`}
         </div>
       </form>
     </Shell>
@@ -203,9 +203,9 @@ function PendingScreen({ email, status, onRefresh, onSignOut }) {
       </h1>
       <div style={{ background: "#1B3050", borderLeft: "4px solid " + RED, borderRadius: 10, padding: "16px 18px", color: "#C9D1DD", fontSize: 14, lineHeight: 1.6, fontWeight: 500 }}>
         {rejected ? (
-          <>Your account (<b style={{ color: "#fff" }}>{email}</b>) doesn't currently have access. Speak to Paul Wardle if you think that's wrong.</>
+          <>Your account (<b style={{ color: "#fff" }}>{email}</b>) doesn't currently have access. Speak to {ADMIN_NAME} if you think that's wrong.</>
         ) : (
-          <>Your account (<b style={{ color: "#fff" }}>{email}</b>) is awaiting approval from Paul Wardle. You'll get view access as soon as it's approved — check back shortly.</>
+          <>Your account (<b style={{ color: "#fff" }}>{email}</b>) is awaiting approval from {ADMIN_NAME}. You'll get view access as soon as it's approved — check back shortly.</>
         )}
       </div>
       {!rejected && <button style={btnStyle} onClick={onRefresh}>I've been approved — refresh</button>}

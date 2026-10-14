@@ -43,11 +43,16 @@ export const LEGACY_PRIORITY = { Critical: "P1", High: "P2", Medium: "P3", Low: 
 
 export const RAGS = ["Red", "Amber", "Green"];
 
+/* The product name, in one place. Everything that prints it — report
+   footers, the newsletter, the assistant's own description of itself —
+   reads it from here, so re-badging the app is a one-line change. */
+export const APP_NAME = "CMAC Operations Command Centre";
+
 /* ---------- operational contexts ----------
    The lens through which work is viewed: a geography, a function, a
    client, a supplier. An item may sit in several at once, which is the
-   whole point — "Spain Ryanair supply review" is Spain AND Ryanair AND
-   Supply without being filed three times. */
+   whole point — a regional supply review for one client is tagged with
+   the region AND the client AND the function, not filed three times. */
 export const CONTEXT_TYPES = ["Geography", "Function", "Client", "Supplier", "Other"];
 /* This is now the ONLY way work is classified. It absorbed three older
    fields — country, workstream and client — which between them meant the

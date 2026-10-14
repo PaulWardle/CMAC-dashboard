@@ -251,7 +251,7 @@ ${meeting.notes}`;
     <div>
       <button className="btn sm" onClick={back}>← All meetings</button>
       <div className="frow" style={{ marginTop: 10 }}>
-        <F label="Title" span><input className="input" autoFocus={!meeting.title} value={meeting.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Spain weekly operational review" /></F>
+        <F label="Title" span><input className="input" autoFocus={!meeting.title} value={meeting.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. weekly operational review" /></F>
         <F label="Date"><input type="date" className="input" value={meeting.date} onChange={(e) => set("date", e.target.value)} /></F>
         <F label="Type"><select className="select" value={meeting.type} onChange={(e) => set("type", e.target.value)}>{MEETING_TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
         <F label="Project"><select className="select" value={meeting.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{projectTree(data).map(({ project: x, depth }) => <option key={x.id} value={x.id}>{"\u00a0\u00a0\u00a0".repeat(depth) + (depth ? "\u2514 " : "") + x.name}</option>)}</select></F>

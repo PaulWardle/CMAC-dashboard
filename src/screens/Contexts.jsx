@@ -2,12 +2,12 @@
    Operational contexts.
 
    The lens, not the folder. A context page answers "what is the
-   current picture in Spain?" by querying every collection for that
-   tag — so one project tagged Spain, Ryanair and Supply appears under
-   all three without existing three times.
+   current picture in this region?" by querying every collection for
+   that tag — so one project tagged with a region, a client and a
+   function appears under all three without existing three times.
 
    This replaces the single-value country field, which forced a choice
-   between Spain and Portugal on work that spanned both.
+   between two regions on work that spanned both.
    ============================================================ */
 import React, { useState } from "react";
 import { F, Stat, Empty, Badge, askConfirm, fmtD } from "../ui";
@@ -15,7 +15,9 @@ import { CONTEXT_TYPES, inContext, uid, isOverdue, prioRank, daysUntil, portfoli
 
 export default function Contexts({ data, mutate, openItem, openProject, openMob }) {
   const [sel, setSel] = useState(null);
+  const [showRetired, setShowRetired] = useState(false);
   const [draft, setDraft] = useState({ name: "", type: "Geography" });
+  const retired = data.contexts.filter((c) => !c.active);
 
   const add = () => {
     if (!draft.name.trim()) return;
@@ -35,49 +37,52 @@ export default function Contexts({ data, mutate, openItem, openProject, openMob 
 
   return (
     <div>
-      <h2 className="h1">Operational contexts</h2>
-      <p className="sub">A geography, a function, a client, a supplier. Tag work with as many as apply — a Spain / Ryanair / Supply review is one record seen from three angles, not three copies.</p>
+      <div className="pagehead">
+        <div>
+          <h2 className="h1">Operational contexts</h2>
+          <p className="sub">A region, a function, a client, a supplier. Tag work with as many as apply — one review seen from three angles is a single record, not three copies.</p>
+        </div>
+        {retired.length > 0 && (
+          <button className="btn sm" onClick={() => setShowRetired((v) => !v)}>
+            {showRetired ? "Hide retired" : `Show retired (${retired.length})`}
+          </button>)}
+      </div>
+
+      <div className="card addctx">
+        <F label="Name"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="a region, a client, a function" /></F>
+        <F label="Type"><select className="select" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>{CONTEXT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
+        <button className="btn pri sm" onClick={add} disabled={!draft.name.trim()}>Add</button>
+      </div>
 
       {CONTEXT_TYPES.map((t) => {
-        const list = data.contexts.filter((c) => c.type === t);
+        const list = data.contexts.filter((c) => c.type === t && (showRetired || c.active));
         if (!list.length) return null;
         return (
-          <div key={t}>
+          <div key={t} className="ctxblock">
             <div className="h2">{t}</div>
             <div className="ctxgrid">
               {list.map((c) => (
                 <div key={c.id} className={"ctxcard" + (c.active ? "" : " off")} onClick={() => setSel(c.id)}>
                   <div className="cname">{c.name}</div>
-                  <div className="ccount">{counts(c)} records</div>
+                  {/* Retiring belongs on the thing being retired, not in a
+                      second list of every context all over again. It sits on
+                      the count line so a long name still gets the full width. */}
+                  <div className="cfoot">
+                    <span className="ccount">{counts(c)} record{counts(c) === 1 ? "" : "s"}</span>
+                    <button className="cretire" title={c.active ? "Hide this from the pickers" : "Put this back in the pickers"}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (c.active && !(await askConfirm(`Retire "${c.name}"? It stays on the ${counts(c)} record(s) that use it.`))) return;
+                        mutate((d) => { const x = d.contexts.find((y) => y.id === c.id); if (x) x.active = !x.active; return d; }, (c.active ? "Retired " : "Restored ") + c.name);
+                      }}>{c.active ? "Retire" : "Restore"}</button>
+                  </div>
                 </div>))}
             </div>
           </div>);
       })}
-
-      <div className="h2">Add a context</div>
-      <div className="card" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <F label="Name"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="e.g. Ryanair, Italy, Rail" /></F>
-        <F label="Type"><select className="select" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>{CONTEXT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></F>
-        <button className="btn pri sm" onClick={add} disabled={!draft.name.trim()}>Add</button>
-      </div>
-
-      <div className="h2">Retire a context</div>
-      <p className="sub">Retiring hides a context from the pickers. Nothing tagged with it is lost, and it still appears on records that already carry it.</p>
-      <div className="ctxgroups">
-        {CONTEXT_TYPES.map((t) => data.contexts.filter((c) => c.type === t)).filter((g) => g.length).map((g) => (
-          <div key={g[0].type} className="ctxgroup">
-            <span className="ctxtype">{g[0].type}</span>
-            <div className="ctxrow">
-              {g.map((c) => (
-                <button key={c.id} className={"ctag" + (c.active ? " on" : "")} title={c.active ? "Active — click to retire" : "Retired — click to restore"}
-                  onClick={async () => {
-                    if (c.active && !(await askConfirm(`Retire "${c.name}"? It stays on the ${counts(c)} record(s) that use it.`))) return;
-                    mutate((d) => { const x = d.contexts.find((y) => y.id === c.id); if (x) x.active = !x.active; return d; }, (c.active ? "Retired " : "Restored ") + c.name);
-                  }}>{c.name}</button>))}
-            </div>
-          </div>))}
-      </div>
+      {!data.contexts.length && <Empty>No contexts yet. Add the regions, functions and clients you actually work across — they become the lenses the whole app can be read through.</Empty>}
+      <p className="sub" style={{ marginTop: 14 }}>Retiring hides a context from the pickers. Nothing tagged with it is lost, and it still shows on records that already carry it.</p>
     </div>
   );
 }

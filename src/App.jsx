@@ -28,7 +28,9 @@ import {
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
   itemAttention, portfolioAttention, okrProgress, okrHealth, migrate,
   ctxName, ctxNames, ctxByName, personName, personByName, inContext, personLoad,
+  APP_NAME,
 } from "./lib/model";
+import { ADMIN_NAME } from "./lib/config";
 
 /* ============================================================
    CMAC Operations Command Centre — v1
@@ -63,7 +65,7 @@ const daysUntil = (s) => { if (!s) return null; return Math.round((new Date(Stri
 const daysSince = (s) => { if (!s) return null; return Math.round((new Date(todayISO()) - new Date(String(s).slice(0,10))) / 86400000); };
 const monthName = () => new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-/* "paul.wardle@cmacgroup.com" → "Paul Wardle" */
+/* "a.person@example.com" → "A Person" */
 const emailToName = (em) => (String(em || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((s) => s[0].toUpperCase() + s.slice(1)).join(" ")) || "Me";
 /* current user's display name, with legacy-"Me" tolerance in filters */
 const meName = (d) => d.settings.displayName || "Me";
@@ -158,7 +160,7 @@ const STYLES = `
 .h1::after { content:"."; color:#FD0E33; }
 .h2 { font-size:10.5px; font-weight:900; color:#FD0E33; margin:20px 0 8px; text-transform:uppercase; letter-spacing:1.8px; }
 .h2:first-child { margin-top:0; }
-.sub { font-size:12px; color:#5C6675; margin:0 0 12px; }
+.sub { font-size:12px; color:#5C6675; margin:0 0 12px; line-height:1.55; max-width:84ch; }
 .card { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:13px 15px; }
 .grid { display:grid; gap:10px; }
 .stat { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:9px 13px; cursor:pointer; }
@@ -212,7 +214,7 @@ const STYLES = `
 .kmeta { display:flex; flex-wrap:wrap; gap:4px; align-items:center; font-size:10.5px; color:#5C6675; }
 .chip { font-size:10px; border:1px solid #DCE3E8; border-radius:999px; padding:0 7px; background:#F5F7F8; font-weight:600; }
 .warnbox { background:#FFF3F5; border:1px solid #F8C0CB; border-left:4px solid #FD0E33; border-radius:10px; padding:9px 13px; font-size:12px; color:#87102A; margin-bottom:10px; }
-.notebox { background:#F2F6FD; border:1px solid #C9D7EF; border-left:4px solid #1D5FBF; border-radius:10px; padding:9px 13px; font-size:12px; color:#173E7E; margin-bottom:10px; }
+.notebox { background:#F2F6FD; border:1px solid #C9D7EF; border-left:4px solid #1D5FBF; border-radius:10px; padding:9px 13px; font-size:12px; line-height:1.55; color:#173E7E; margin-bottom:10px; max-width:84ch; }
 .okbox { background:#F0F8F2; border:1px solid #BFE0C8; border-left:4px solid #1A7F44; border-radius:10px; padding:9px 13px; font-size:12px; color:#0F5C2E; margin-bottom:10px; }
 .empty { padding:24px; text-align:center; color:#5C6675; background:#fff; border:1.5px dashed #C7CFD8; border-radius:12px; font-size:12.5px; }
 .kcol.done { background:#EAF1EB; border-color:#CFE0D3; min-width:168px; width:168px; }
@@ -296,12 +298,22 @@ const STYLES = `
 .p1to1 { font-size:10.5px; color:#78828F; margin-top:7px; border-top:1px solid #EDEFF2; padding-top:6px; }
 
 /* ---------- Contexts ---------- */
-.ctxgrid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); }
-.ctxcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:11px 13px; cursor:pointer; }
+.ctxgrid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); }
+.ctxblock { margin-bottom:16px; }
+.ctxcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:10px 13px 9px; cursor:pointer; }
 .ctxcard:hover { border-color:#1D5FBF; }
-.ctxcard.off { opacity:.5; }
-.ctxcard .cname { font-weight:800; color:#112138; font-size:13px; }
-.ctxcard .ccount { font-size:10.5px; color:#78828F; margin-top:2px; }
+.ctxcard .cname { font-weight:800; color:#112138; font-size:13px; line-height:1.3; }
+.ctxcard .cfoot { display:flex; align-items:center; gap:8px; margin-top:3px; min-height:18px; }
+.ctxcard .ccount { font-size:10.5px; color:#78828F; }
+.ctxcard .cretire { margin-left:auto; padding:1px 7px; border-radius:6px; border:1.5px solid #E1E7EC; background:#fff; color:#8A93A0; font-family:inherit; font-size:8.5px; font-weight:800; text-transform:uppercase; letter-spacing:.9px; cursor:pointer; opacity:0; }
+.ctxcard:hover .cretire, .ctxcard.off .cretire { opacity:1; }
+.ctxcard .cretire:hover { border-color:#FD0E33; color:#FD0E33; }
+.ctxcard.off { background:#F6F8F9; border-style:dashed; }
+.ctxcard.off .cname { color:#78828F; }
+.addctx { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:18px; }
+.addctx > div:first-child { flex:1 1 230px; max-width:320px; }
+.pagehead { display:flex; align-items:flex-start; gap:12px; margin-bottom:14px; }
+.pagehead > div:first-child { flex:1; }
 
 /* ---------- Goals and OKRs ---------- */
 .okrcard { background:#fff; border:1px solid #E1E7EC; border-radius:12px; padding:13px 15px; margin-bottom:8px; cursor:pointer; }
@@ -346,7 +358,7 @@ const STYLES = `
 .minirow { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-top:5px; }
 .minirow .input.sm, .minirow .select.sm { width:auto; min-width:92px; padding:2px 7px; font-size:11px; }
 .savebar { position:sticky; bottom:0; background:linear-gradient(to top,#EDF1F2 65%,rgba(237,241,242,0)); padding:12px 0 6px; display:flex; gap:8px; margin-top:10px; }
-.emptyst { background:#fff; border:1px dashed #C7CFD8; border-radius:12px; padding:18px 16px; font-size:12.5px; color:#5C6675; text-align:center; }
+.emptyst { background:#fff; border:1px dashed #C7CFD8; border-radius:12px; padding:18px 16px; font-size:12.5px; line-height:1.55; color:#5C6675; text-align:center; }
 
 .ctxgroups { display:flex; flex-direction:column; gap:7px; }
 .ctxgroup { display:flex; align-items:baseline; gap:10px; }
@@ -439,7 +451,7 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 
 
 /* Add a task where you are standing. One line, Enter, done — a modal with
-   twelve fields is the wrong price for "chase Claire on Thursday". */
+   twelve fields is the wrong price for "chase the rota on Thursday". */
 function QuickAdd({ data, mutate, preset, placeholder, people }) {
   const [t, setT] = useState("");
   const [who, setWho] = useState("");
@@ -667,8 +679,8 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           </>}
           {w.status === "Done" && <F label="Outcome delivered" span><AutoTa value={w.outcome} onChange={(e) => set("outcome", e.target.value)} placeholder="What was actually delivered, and the benefit." /></F>}
         </div>
-        {/* Operational contexts. One item, several lenses — a Spain / Ryanair
-            / Supply review is tagged three times and filed once. */}
+        {/* Operational contexts. One item, several lenses — a region /
+            client / function review is tagged three times, filed once. */}
         <div className="h2">Operational contexts</div>
         <ContextPicker contexts={data.contexts.filter((c) => c.active || (w.contexts || []).includes(c.id))}
           selected={w.contexts} onToggle={toggleCtx} />
@@ -1492,7 +1504,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         ``, `## Open risks`, ...(allItems.filter((w) => w.type === "Risk" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} (${w.extra?.rating || "unrated"})${w.extra?.mitigation ? " — mitigation: " + w.extra.mitigation : " — NO MITIGATION"}`)),
         ``, `## Decisions outstanding`, ...(allItems.filter((w) => w.type === "Decision" && OPEN_STATUSES.includes(w.status)).map((w) => `- ${w.title} — required by ${fmtD(w.extra?.requiredBy || w.due)}`)),
         ``, `## Latest updates`, ...updates.slice(0, 3).map((u) => `- ${fmtD(u.date)}: ${u.summary}`),
-        ``, `_Generated ${fmtD(todayISO())} from CMAC Operations Command Centre._`].join("\n");
+        ``, `_Generated ${fmtD(todayISO())} from ${APP_NAME}._`].join("\n");
       copyText(t); askInfo("Project report copied to clipboard as Markdown.");
     };
     return (
@@ -2199,7 +2211,7 @@ function ReportWorkspace({ data, mutate }) {
         lines.push("");
       });
     }
-    lines.push(`_Prepared ${fmtD(todayISO())}. Generated from CMAC Operations Command Centre._`);
+    lines.push(`_Prepared ${fmtD(todayISO())}. Generated from ${APP_NAME}._`);
     return lines.join("\n");
   };
   /* Belt-and-braces for the board output: even though People is excluded
@@ -2291,9 +2303,9 @@ function ReportWorkspace({ data, mutate }) {
 </style></head><body>
 <div class="head"><img src="${window.location.origin}/cmac-logo.png" alt="cmac." /><span style="font-size:8.5pt;letter-spacing:2px;color:#5C6675;font-weight:800;">OPERATIONS COMMAND CENTRE</span></div>
 <h1>${esc(outTitle)}<span style="color:#FD0E33">.</span></h1>
-<div class="meta">${esc(draft.period)} · Prepared ${fmtD(todayISO())} · Paul Wardle</div>
+<div class="meta">${esc(draft.period)} · Prepared ${fmtD(todayISO())} · ${esc(meName(data))}</div>
 ${body}
-<div class="foot">Generated from the CMAC Operations Command Centre.</div>
+<div class="foot">Generated from ${APP_NAME}.</div>
 <script>window.addEventListener('load',function(){setTimeout(function(){window.print();},350);});</` + `script></body></html>`;
     const win = window.open("", "_blank");
     if (!win) return askInfo("Your browser blocked the print window — allow pop-ups for this site.");
@@ -2594,8 +2606,8 @@ function ContextPanel({ data, mutate }) {
   const fields = [
     ["org", "About you & the operation", "Who you are, your role, what the operation covers, current top priorities…"],
     ["people", "People & roles", "Names, roles and areas — so the AI assigns the right owners and knows who 'waiting on' means…"],
-    ["clients", "Clients & terminology", "Key clients, systems and abbreviations (e.g. Minicabit, Ops Portal, T&Q)…"],
-    ["rules", "Standing triage rules", "e.g. \"Anything safety-related → Critical + board flag\" · \"Minicabit items → High, Minicabit performance workstream\" · \"Recruitment items belong to HR, never me\"…"],
+    ["clients", "Clients & terminology", "The clients, systems and abbreviations you use every day, and what each one means…"],
+    ["rules", "Standing triage rules", "One rule per line — \"anything safety-related is P1 and flagged to the board\", \"recruitment belongs to HR, never me\"…"],
     ["learned", "Learned by the AI & anything else (AOB)", "The assistant and capture add notes here automatically as they learn — new people, clients, terms, rules. Edit or delete anything; whatever you type here is briefed to the AI too…"],
   ];
   return (
@@ -2998,7 +3010,7 @@ function Assistant({ data, mutate, auth, onClose }) {
         position: { type: "string", description: "where it stands today, in plain prose" },
         target: { type: "string" }, parent: { type: "string" },
         progress: { type: "number", description: "0-100" },
-        progressBasis: { type: "string", description: "whose figure this is, e.g. 'Claire, 1:1'" },
+        progressBasis: { type: "string", description: "whose figure this is — the person who reported it, and where" },
         blocked: { type: "boolean" }, blocker: { type: "string" },
       }, required: ["name"] },
     },
@@ -3162,7 +3174,7 @@ function Assistant({ data, mutate, auth, onClose }) {
   };
 
   const systemPrompt = () =>
-    `You are the embedded assistant inside the CMAC Operations Command Centre, working for ${meName(data)} (${auth?.isAdmin ? "administrator" : canEdit ? "editor" : "view-only user"}). Today is ${fmtD(todayISO())} (${todayISO()}). Be concise, practical and direct; UK date format; plain prose (no markdown headers).
+    `You are the embedded assistant inside the ${APP_NAME}, working for ${meName(data)} (${auth?.isAdmin ? "administrator" : canEdit ? "editor" : "view-only user"}). Today is ${fmtD(todayISO())} (${todayISO()}). Be concise, practical and direct; UK date format; plain prose (no markdown headers).
 ${canEdit ? "When the user asks you to log, create, chase, close or change something, use the tools — then confirm briefly what you did. When you learn a durable fact — a person's role, a client, an abbreviation, a standing preference, or the user corrects you on something lasting — save one concise note with remember_context so future captures and conversations know it. Don't save one-off task details that way." : "The user has view-only access — never attempt changes; explain that edits need the administrator."}
 Messages may include attached files — emails, documents, spreadsheets (as CSV text), PDFs, screenshots. Read them fully and pull out what matters${canEdit ? "; when asked to log from them, create the items with the tools" : ""}.
 Ground every answer ONLY in the workspace data below, the conversation and any attached files. If something isn't tracked, say so plainly. Label inferences as observations.
@@ -3755,7 +3767,7 @@ export default function App({ auth }) {
         </div>
         <div className="content" key={screenKey}>
           {storageWarn && <div className="warnbox">Persistent storage isn't available right now. Your changes may be lost when you leave — use Settings → Export to take a JSON backup.</div>}
-          {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Ask Paul Wardle if you need editing rights. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
+          {roNotice && <div className="notebox">You have view-only access — changes aren't saved. Ask {ADMIN_NAME} if you need editing rights. <span className="linkish" onClick={() => setRoNotice(false)}>Dismiss</span></div>}
           {syncNote && <div className="notebox">{syncNote} <span className="linkish" onClick={() => setSyncNote("")}>Dismiss</span></div>}
           {pendingReqs > 0 && <div className="warnbox">{pendingReqs} access request{pendingReqs > 1 ? "s" : ""} awaiting your approval. <span className="linkish" onClick={() => go("settings")}>Review in Settings → Team & access</span></div>}
           {view}
