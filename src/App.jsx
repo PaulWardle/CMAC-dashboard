@@ -248,12 +248,19 @@ const STYLES = `
 .pfnums .bad b { color:#FD0E33; }
 .pfnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
 .chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
-.wand { display:inline-flex; align-items:center; gap:5px; background:#F3EFFA; border:1.5px solid #DCD2EF; color:#5B3FA0; border-radius:999px; padding:4px 12px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; }
-.wand:hover:not(:disabled) { background:#E9E1F7; border-color:#C4B2E6; }
-.wand:disabled { opacity:.45; cursor:default; }
-.wand.sm { padding:2px 10px; font-size:11px; }
-.wandout { background:#FAF8FD; border:1px solid #E4DBF3; border-radius:10px; padding:10px 12px; margin-top:8px; }
-.wandout .flab { color:#5B3FA0; }
+/* A quiet icon in the app's own palette, not a coloured pill shouting
+   "AI". It sits beside a field and does nothing until asked. */
+.wand { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; background:#fff; border:1.5px solid #DCE3E8; border-radius:8px; color:#5C6675; cursor:pointer; font-family:inherit; vertical-align:middle; }
+.wand:hover:not(:disabled) { border-color:#112138; color:#FD0E33; }
+.wand:active:not(:disabled) { transform:scale(.94); }
+.wand:disabled { opacity:.35; cursor:default; }
+.wand.busy { color:#FD0E33; border-color:#F3C2CB; }
+.wand.busy svg { animation:wandpulse 1s ease-in-out infinite; }
+@keyframes wandpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+.fieldwand { position:relative; }
+.fieldwand > .wand { position:absolute; top:6px; right:6px; z-index:2; }
+.fieldwand > .ta { padding-right:40px; }
+.wandout { background:#fff; border:1px solid #E1E7EC; border-left:3px solid #112138; border-radius:10px; padding:10px 12px; margin-top:8px; }
 .quickadd { display:flex; gap:6px; margin:8px 0; }
 .quickadd .input { flex:1; }
 .quickadd .select { width:auto; min-width:110px; }
@@ -1398,10 +1405,14 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
                   : "Leave this blank unless there is something real to count. The stage already says where the work has got to."}
             </div>
           </F>
-          <F label="Objective" span>
-            <div style={{ marginBottom: 4 }}><Wand data={data} project={p} kind="objective" text={p.objective} compact onUse={(t) => set("objective", t)} /></div><textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} /></F>
-          <F label="Current position" span>
-            <div style={{ marginBottom: 4 }}><Wand data={data} project={p} kind="position" text={p.position} compact onUse={(t) => set("position", t)} /></div><textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} /></F>
+          <F label="Objective" span><div className="fieldwand">
+            <textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} />
+            <Wand data={data} project={p} kind="objective" text={p.objective} onUse={(t) => set("objective", t)} />
+          </div></F>
+          <F label="Current position" span><div className="fieldwand">
+            <textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} />
+            <Wand data={data} project={p} kind="position" text={p.position} onUse={(t) => set("position", t)} />
+          </div></F>
           <F label="Held up?" span>
             <label className="checkline" style={{ padding: 0 }}>
               <input type="checkbox" checked={!!p.blocked} onChange={(e) => set("blocked", e.target.checked)} />
@@ -1510,9 +1521,9 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           <div className="card">
             <div className="flab">Objective</div><div style={{ marginBottom: 8 }}>{p.objective || "—"}</div>
             <div className="flab">Current position</div>
-            <div style={{ marginBottom: 8 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
-            <div style={{ marginBottom: 10 }}>
-              <Wand data={data} project={p} kind="position" text={p.position} compact
+            <div className="fieldwand" style={{ marginBottom: 10 }}>
+              <div style={{ paddingRight: 34, minHeight: 18 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
+              <Wand data={data} project={p} kind="position" text={p.position}
                 onUse={(t) => mutate((d) => { const x = d.projects.find((y) => y.id === p.id); if (x) { x.position = t; x.updatedAt = todayISO(); } return d; }, "Position updated: " + p.name)} />
             </div>
             <div style={{ display: "flex", gap: 16, fontSize: 12.5, flexWrap: "wrap" }}>
@@ -1592,11 +1603,13 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           </div>)}
         <div className="h2">Add update</div>
         <div className="card">
-          <textarea className="ta" rows={2} value={updText} onChange={(e) => setUpdText(e.target.value)}
-            placeholder="Dump it however it comes out — the wand reads the project and tidies it into something you could send." />
-          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn pri" onClick={addUpdate} disabled={!updText.trim()}>Add update</button>
+          <div className="fieldwand">
+            <textarea className="ta" rows={2} value={updText} onChange={(e) => setUpdText(e.target.value)}
+              placeholder="Dump it however it comes out — the wand tidies it into something you could send." />
             <Wand data={data} project={p} kind="update" text={updText} onUse={setUpdText} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button className="btn pri" onClick={addUpdate} disabled={!updText.trim()}>Add update</button>
           </div>
         </div>
         <div className="h2">Updates ({updates.length})</div>

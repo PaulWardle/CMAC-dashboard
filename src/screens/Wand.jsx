@@ -85,14 +85,21 @@ export default function Wand({ data, project, kind, text, onUse, compact }) {
 
   return (
     <>
-      <button type="button" className={"wand" + (compact ? " sm" : "")} disabled={busy || (!typed && !canBlank)}
+      <button type="button" className={"wand" + (busy ? " busy" : "")} disabled={busy || (!typed && !canBlank)}
+        aria-label={typed ? "Tidy what you have written" : job.empty}
         title={typed ? "Tidy what you have written" : job.empty} onClick={run}>
-        {busy ? "…" : "✨"} {busy ? "" : (typed ? job.label : "Draft")}
+        <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor"
+          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 15.5 L10.5 7.5" />
+          <path d="M12.4 2.2 l0.8 2.0 2.0 0.8 -2.0 0.8 -0.8 2.0 -0.8 -2.0 -2.0 -0.8 2.0 -0.8 Z" fill="currentColor" stroke="none" />
+          <path d="M5.4 3.0 l0.45 1.15 1.15 0.45 -1.15 0.45 -0.45 1.15 -0.45 -1.15 -1.15 -0.45 1.15 -0.45 Z" fill="currentColor" stroke="none" />
+          <path d="M14.6 11.0 l0.4 1.0 1.0 0.4 -1.0 0.4 -0.4 1.0 -0.4 -1.0 -1.0 -0.4 1.0 -0.4 Z" fill="currentColor" stroke="none" />
+        </svg>
       </button>
       {err && <div className="warnbox" style={{ marginTop: 6 }}>{err}</div>}
       {out && (
         <div className="wandout">
-          <div className="flab">Suggested — your words are untouched until you choose</div>
+          <div className="flab">Suggested — your own words are untouched until you choose</div>
           <textarea className="ta" rows={4} value={out} onChange={(e) => setOut(e.target.value)} />
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <button type="button" className="btn pri sm" onClick={() => { onUse(out); setOut(""); }}>Use this</button>
