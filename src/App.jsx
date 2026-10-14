@@ -1020,16 +1020,18 @@ const BOARD_COLS = [
   { key: "Waiting", label: "Waiting on" },
   { key: "Blocked", label: "Blocked" },
 ];
-/* Saved views, as tabs. Each is a filter over the same records — one
-   source, many views — so nothing is duplicated to appear in two places. */
+/* This board is a personal task list first. It opens on your own work,
+   because that is the question it exists to answer — what am I doing
+   next. Project work is still here, under Everything and behind the
+   Project filter, but the place to run a project is its own page.
+
+   Seven tabs was six ways of saying "what is urgent", and the answers
+   already live elsewhere: overdue on the Command Centre, chases on
+   Waiting & Chasing, due dates on the cards themselves. */
 const BOARD_VIEWS = {
-  "Board": () => true,
+  "Mine": (d, w) => isMine(d, w) && !isWaiting(w),
   "Focus": (d, w) => w.focus,
-  "My actions": (d, w) => isMine(d, w) && !isWaiting(w),
-  "Waiting on": (d, w) => isWaiting(w),
-  "This week": (d, w) => w.due && daysUntil(w.due) <= 7,
-  "Overdue": (d, w) => isOverdue(w),
-  "P1 & P2": (d, w) => ["P1", "P2"].includes(w.priority),
+  "Everything": () => true,
 };
 
 function ItemCard({ data, w, onOpen, onDragStart, mutate }) {
@@ -1061,8 +1063,8 @@ function ItemCard({ data, w, onOpen, onDragStart, mutate }) {
 }
 
 function ActionBoard({ data, mutate, openItem, newItem }) {
-  const [f, setF] = useState({ q: "", owner: "", project: "", context: "", type: "", view: "Board" });
-  const test = BOARD_VIEWS[f.view] || BOARD_VIEWS.Board;
+  const [f, setF] = useState({ q: "", owner: "", project: "", context: "", type: "", view: "Mine" });
+  const test = BOARD_VIEWS[f.view] || BOARD_VIEWS.Mine;
   let rows = data.workItems.filter((w) => isOpen(w) && !isArchived(w));
   rows = rows.filter((w) => test(data, w));
   if (f.q) rows = rows.filter((w) => (w.title + " " + w.description).toLowerCase().includes(f.q.toLowerCase()));

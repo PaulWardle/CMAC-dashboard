@@ -167,12 +167,26 @@ await soft("Saving writes the records with the right modes", async () => {
   await page.locator('.savebar button.pri').click();
   await page.waitForTimeout(900);
   await go("Action Board");
+  /* The board opens on your own work, so a chase is not on it until you
+     ask for everything — that is the point of the default. */
+  await page.locator('.vtab:text-is("Everything")').click();
+  await page.waitForTimeout(300);
   const waitCol = page.locator(".kcol", { hasText: /^Waiting on/ });
   const txt = await waitCol.innerText();
   if (!/Barcelona hotel availability/.test(txt)) throw new Error("waiting item did not land in the Waiting column");
   const planned = await page.locator(".kcol", { hasText: /^Not started/ }).innerText();
   if (!/Spain peak cover plan/.test(planned)) throw new Error("my action did not land in Not started");
   return true;
+});
+
+await soft("The board opens on my own work, not everyone's", async () => {
+  await go("Action Board");
+  const active = await page.locator(".vtab.on").innerText();
+  if (!/^Mine/.test(active.trim())) throw new Error("opened on '" + active.trim() + "'");
+  const shown = await page.locator(".kcard").allInnerTexts();
+  if (shown.some((t) => /Barcelona hotel availability/.test(t))) throw new Error("a chase is showing on my own list");
+  if (!shown.some((t) => /Spain peak cover plan/.test(t))) throw new Error("my own action is missing");
+  return shown.length + " cards, none of them chases";
 });
 
 await soft("A captured item carries its source back to the dump", async () => {
