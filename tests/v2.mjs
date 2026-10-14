@@ -84,6 +84,50 @@ await soft("Operational contexts are seeded, not empty", async () => {
   return n + " contexts";
 });
 
+/* ---------- people: a directory, and what is not a person ---------- */
+await soft("A pasted directory becomes people, columns read from the header", async () => {
+  await go("People");
+  await page.locator('button:text-is("Paste a list")').click();
+  await page.waitForTimeout(200);
+  await page.locator("textarea").first().fill([
+    /* narrow trailing column prints as a single dash — still a rule, not a person */
+    "| Name | Job Title | Function / Department | Location | Level |   |",
+    "| ---- | --------- | --------------------- | -------- | ----- | - |",
+    "| A Person | Head of Function | UK Operations | Site One | HoF |   |",
+    "| B Person | Operations Manager | Spain Operations | Site Two | Ops Manager |   |",
+    "| Open Position | Operations Manager | UK Operations | Site One | Ops Manager |   |",
+    "|          |           |                       |          |             |   |",
+  ].join("\n"));
+  await page.waitForTimeout(300);
+  const rows = await page.locator(".tbl tbody tr").count();
+  if (rows !== 3) throw new Error("preview read " + rows + " rows, wanted 3");
+  await page.locator('button:has-text("Add 3 people")').click();
+  await page.waitForTimeout(600);
+  const cards = await page.locator(".personcard").allInnerTexts();
+  const want = ["A Person", "B Person", "Open Position"];
+  const missing = want.filter((w) => !cards.some((c) => c.includes(w)));
+  if (missing.length) throw new Error("missing: " + missing.join(", "));
+  if (!cards.some((c) => c.includes("Head of Function") && c.includes("UK Operations") && c.includes("Site One"))) {
+    throw new Error("title / function / location did not land on the card");
+  }
+  return rows + " rows in, 3 people out";
+});
+
+await soft("A duplicate name in a paste is skipped, not doubled", async () => {
+  await go("People");
+  await page.locator('button:text-is("Paste a list")').click();
+  await page.waitForTimeout(200);
+  await page.locator("textarea").first().fill("Name,Job Title\nA Person,Head of Function\nC Person,Operations Manager");
+  await page.waitForTimeout(300);
+  const label = await page.locator('.card button.pri').first().innerText();
+  if (!/Add 1 person$/.test(label.trim())) throw new Error("button said '" + label + "'");
+  await page.locator('.card button.pri').first().click();
+  await page.waitForTimeout(600);
+  const n = await page.locator(".personcard", { hasText: "A Person" }).count();
+  if (n !== 1) throw new Error("A Person appears " + n + " times");
+  return "1 added, 1 skipped";
+});
+
 /* ---------- capture: the rebuild ---------- */
 await soft("Capture reads a dump and groups it by kind", async () => {
   await go("Capture");

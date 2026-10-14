@@ -24,6 +24,7 @@ export default function People({ data, mutate, openItem, openProject, go }) {
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const rows = useMemo(() => {
     const list = data.people.filter((p) => !q || (p.name + " " + p.role + " " + p.func).toLowerCase().includes(q.toLowerCase()));
@@ -42,25 +43,36 @@ export default function People({ data, mutate, openItem, openProject, go }) {
     if (data.people.some((p) => p.name.toLowerCase() === n.toLowerCase())) return askInfo(`${n} is already on the list.`);
     mutate((d) => {
       d.people.push({
-        id: uid(), name: n, role: "", func: "", location: "", relationship: "Colleague",
-        managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
-        strengths: "", development: "", privateNotes: "", pdr: [], notes: [],
-        active: true, created: todayISO(),
+        ...blankPerson(n),
       });
       return d;
     }, "Added " + n);
     setAdding(false);
   };
 
+  /* Adding a directory one modal at a time is the sort of job that never
+     gets done. Paste the table you already keep and it reads the columns. */
+  const addMany = (rows) => {
+    mutate((d) => {
+      rows.forEach((r) => d.people.push({ ...blankPerson(r.name), role: r.role || "", func: r.func || "", location: r.location || "", level: r.level || "", relationship: r.relationship || "Colleague" }));
+      return d;
+    }, `Added ${rows.length} ${rows.length === 1 ? "person" : "people"}`);
+    setImporting(false);
+  };
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <h2 className="h1">People</h2>
-        <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => setAdding(true)}>+ Add person</button>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button className="btn sm" onClick={() => { setImporting((v) => !v); setAdding(false); }}>Paste a list</button>
+          <button className="btn pri sm" onClick={() => { setAdding(true); setImporting(false); }}>+ Add person</button>
+        </span>
       </div>
       <p className="sub">Who is holding what, and what is overdue. Open anyone to prepare for a one-to-one in a few seconds.</p>
 
       {adding && <AddPerson onAdd={addPerson} onCancel={() => setAdding(false)} />}
+      {importing && <ImportPeople existing={data.people} onAdd={addMany} onCancel={() => setImporting(false)} />}
 
       <div className="toolrow">
         <input className="input" placeholder="Find a person…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -73,8 +85,8 @@ export default function People({ data, mutate, openItem, openProject, go }) {
           const hot = load.overdue.length + load.chaseDue.length;
           return (
             <div key={p.id} className={"personcard" + (hot ? " hot" : "")} onClick={() => setSel(p.id)}>
-              <div className="pname">{p.name}</div>
-              <div className="prole">{[p.role, p.func].filter(Boolean).join(" · ") || p.relationship}</div>
+              <div className="pname">{p.name}{p.level && <span className="plevel">{p.level}</span>}</div>
+              <div className="prole">{[p.role, p.func, p.location].filter(Boolean).join(" · ") || p.relationship}</div>
               <div className="pstats">
                 <span><b>{load.waitingOnThem.length}</b> waiting on them</span>
                 {load.overdue.length > 0 && <span className="bad"><b>{load.overdue.length}</b> overdue</span>}
@@ -84,6 +96,85 @@ export default function People({ data, mutate, openItem, openProject, go }) {
               {p.nextOneToOne && <div className="p1to1">Next 1:1 {fmtD(p.nextOneToOne)}{daysUntil(p.nextOneToOne) >= 0 ? ` · in ${daysUntil(p.nextOneToOne)}d` : " · overdue"}</div>}
             </div>);
         })}
+      </div>
+    </div>
+  );
+}
+
+/* One shape for a new person, so the three places that mint one cannot
+   drift apart. */
+const blankPerson = (name) => ({
+  id: uid(), name: String(name).trim(), role: "", func: "", location: "", level: "",
+  relationship: "Colleague", managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
+  strengths: "", development: "", privateNotes: "", pdr: [], notes: [],
+  active: true, created: todayISO(),
+});
+
+/* Reads a markdown table, a CSV or a tab-separated paste. The header row
+   decides which column is which, so column order does not matter and
+   columns it does not recognise are ignored rather than guessed at. */
+const COLS = {
+  name: ["name", "person", "who", "full name"],
+  role: ["job title", "title", "role", "position"],
+  func: ["function", "department", "dept", "function / department", "team", "area"],
+  location: ["location", "site", "based", "office"],
+  level: ["level", "grade", "band", "seniority"],
+  relationship: ["relationship", "type"],
+};
+export function parsePeople(text) {
+  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const cells = (l) => (l.includes("|") ? l.replace(/^\||\|$/g, "").split("|") : l.includes("\t") ? l.split("\t") : l.split(","))
+    .map((c) => c.trim().replace(/^\*+|\*+$/g, "").trim());
+  /* A markdown separator row. Narrow columns print as a single dash, so
+     one is as much a rule as twenty. */
+  const isRule = (cs) => cs.every((c) => /^:?-+:?$/.test(c) || /^=+$/.test(c) || !c);
+  const rows = lines.map(cells).filter((cs) => !isRule(cs));
+  if (!rows.length) return [];
+
+  let map = null, start = 0;
+  const head = rows[0].map((c) => c.toLowerCase());
+  if (head.some((h) => COLS.name.includes(h))) {
+    map = {};
+    head.forEach((h, i) => { for (const k of Object.keys(COLS)) if (COLS[k].includes(h)) map[k] = i; });
+    start = 1;
+  }
+  const out = [];
+  for (let i = start; i < rows.length; i++) {
+    const cs = rows[i];
+    const pick = (k, fallback) => { const idx = map && map[k] !== undefined ? map[k] : fallback; return idx === undefined ? "" : (cs[idx] || "").trim(); };
+    const name = pick("name", 0);
+    if (!name || /^name$/i.test(name)) continue;
+    out.push({ name, role: pick("role", 1), func: pick("func", 2), location: pick("location", 3), level: pick("level", 4) });
+  }
+  return out;
+}
+
+function ImportPeople({ existing, onAdd, onCancel }) {
+  const [text, setText] = useState("");
+  const parsed = useMemo(() => parsePeople(text), [text]);
+  const have = new Set(existing.map((p) => p.name.toLowerCase()));
+  const fresh = parsed.filter((r) => !have.has(r.name.toLowerCase()));
+  const dupes = parsed.length - fresh.length;
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div className="flab">Paste a table, a CSV or a tab-separated list</div>
+      <AutoTa minRows={2} value={text} onChange={(e) => setText(e.target.value)}
+        placeholder="Name, job title, function, location, level — with a header row. Columns it does not recognise are ignored." />
+      {parsed.length > 0 && <>
+        <div className="h2" style={{ marginTop: 12 }}>Read {parsed.length} row{parsed.length === 1 ? "" : "s"}{dupes ? ` · ${dupes} already on the list` : ""}</div>
+        <table className="tbl">
+          <thead><tr><th>Name</th><th>Job title</th><th>Function</th><th>Location</th><th>Level</th></tr></thead>
+          <tbody>{parsed.map((r, i) => (
+            <tr key={i} style={have.has(r.name.toLowerCase()) ? { opacity: .45 } : null}>
+              <td>{r.name}</td><td>{r.role || "—"}</td><td>{r.func || "—"}</td><td>{r.location || "—"}</td><td>{r.level || "—"}</td>
+            </tr>))}</tbody>
+        </table>
+      </>}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button className="btn pri sm" disabled={!fresh.length} onClick={() => onAdd(fresh)}>
+          {fresh.length ? `Add ${fresh.length} ${fresh.length === 1 ? "person" : "people"}` : "Nothing new to add"}
+        </button>
+        <button className="btn sm" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );
@@ -206,6 +297,7 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
         <div className="frow" style={{ marginTop: 10 }}>
           <F label="Role"><input className="input" value={person.role} onChange={(e) => set("role", e.target.value)} /></F>
           <F label="Function"><input className="input" value={person.func} onChange={(e) => set("func", e.target.value)} /></F>
+          <F label="Level"><input className="input" value={person.level || ""} onChange={(e) => set("level", e.target.value)} placeholder="e.g. head of function, manager" /></F>
           <F label="Location"><input className="input" value={person.location} onChange={(e) => set("location", e.target.value)} /></F>
           <F label="Relationship"><select className="select" value={person.relationship} onChange={(e) => set("relationship", e.target.value)}>{RELATIONSHIPS.map((r) => <option key={r}>{r}</option>)}</select></F>
           <F label="1:1 cadence"><input className="input" value={person.oneToOne} onChange={(e) => set("oneToOne", e.target.value)} placeholder="e.g. fortnightly, Tuesdays" /></F>

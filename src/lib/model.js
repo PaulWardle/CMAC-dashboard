@@ -607,8 +607,16 @@ export function migrate(d) {
   /* --- people: owners and waiting-ons become real records ---
      The signed-in user is excluded up front rather than created and then
      deleted. Doing it the other way round left the migration reporting a
-     change on every single load, and writing the document each time. */
+     change on every single load, and writing the document each time.
+
+     An owner may legitimately be a function rather than a person —
+     "Business Change" owns a project, you are waiting on "Supply". Those
+     are departments, and a department is not a colleague: it has no 1:1,
+     no development note and no PDR. Anything that matches an operational
+     context, or that names two parties at once, is left alone. */
   const me = (d.settings && d.settings.displayName) || "";
+  const ctxNameSet = new Set((d.contexts || []).map((c) => String(c.name || "").trim().toLowerCase()));
+  const isNotAPerson = (name) => ctxNameSet.has(name.toLowerCase()) || /[\/&]| and | или /i.test(name);
   const known = new Set(d.people.map((p) => p.name.toLowerCase()));
   const seen = new Map();
   d.workItems.forEach((w) => {
@@ -616,13 +624,14 @@ export function migrate(d) {
       const name = String(n || "").trim();
       if (!name || name === "Me" || known.has(name.toLowerCase())) return;
       if (me && name.toLowerCase() === me.toLowerCase()) return;
+      if (isNotAPerson(name)) return;
       seen.set(name.toLowerCase(), name);
     });
   });
   if (seen.size) {
     seen.forEach((name) => {
       d.people.push({
-        id: uid(), name, role: "", func: "", location: "", relationship: "Colleague",
+        id: uid(), name, role: "", func: "", location: "", level: "", relationship: "Colleague",
         managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
         strengths: "", development: "", privateNotes: "", pdr: [], notes: [],
         active: true, created: todayISO(),
@@ -631,6 +640,7 @@ export function migrate(d) {
     changed = true;
   }
   d.people.forEach((p) => {
+    if (typeof p.level !== "string") { p.level = ""; changed = true; }
     if (!Array.isArray(p.pdr)) { p.pdr = []; changed = true; }
     if (!Array.isArray(p.notes)) { p.notes = []; changed = true; }
     if (!Array.isArray(p.contexts)) { p.contexts = []; changed = true; }
@@ -641,6 +651,22 @@ export function migrate(d) {
   if (me) {
     const dup = d.people.findIndex((p) => p.name.toLowerCase() === me.toLowerCase());
     if (dup >= 0) { d.people.splice(dup, 1); changed = true; }
+  }
+
+  /* And clear out the departments the old harvest filed as colleagues.
+     Only the untouched shape it created is removed — the moment a record
+     has a job title, a location, a note or anything else on it, it is
+     somebody's record and it stays, whatever it is called. */
+  const untouched = (p) => !p.role && !p.func && !p.location && !p.level && !p.oneToOne && !p.nextOneToOne
+    && !p.strengths && !p.development && !p.privateNotes && !p.managerId
+    && !(p.notes || []).length && !(p.pdr || []).length && !(p.contexts || []).length
+    && (!p.relationship || p.relationship === "Colleague");
+  const bogus = d.people.filter((p) => ctxNameSet.has(String(p.name).trim().toLowerCase()) && untouched(p));
+  if (bogus.length) {
+    const drop = new Set(bogus.map((p) => p.id));
+    d.people = d.people.filter((p) => !drop.has(p.id));
+    d.people.forEach((p) => { if (drop.has(p.managerId)) p.managerId = ""; });
+    changed = true;
   }
 
   /* Benefits was never built out past its data shape. Carrying an empty

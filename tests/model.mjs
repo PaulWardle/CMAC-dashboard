@@ -64,6 +64,38 @@ P("The signed-in user is NOT created as a colleague", !names.includes("Paul Ward
 P("The placeholder owner 'Me' is not created as a person", !names.includes("Me"));
 P("Every person has the confidential fields initialised", m.people.every((p) => Array.isArray(p.pdr) && "strengths" in p));
 
+/* A department is not a colleague. An owner or waiting-on may name a
+   function — that is deliberate — and it must not turn into a person with
+   a 1:1, a development note and a PDR. */
+const deptDoc = () => ({
+  v: 3,
+  settings: { displayName: "Paul Wardle", staleItem: 14, staleProject: 21, staleMob: 7 },
+  contexts: [
+    { id: "cx1", name: "Business Change", type: "Function", active: true },
+    { id: "cx2", name: "Supply", type: "Function", active: true },
+  ],
+  people: [
+    /* already filed by the old harvest, untouched since */
+    { id: "ph1", name: "Business Change", role: "", func: "", location: "", relationship: "Colleague", managerId: "", contexts: [], oneToOne: "", nextOneToOne: "", strengths: "", development: "", privateNotes: "", pdr: [], notes: [], active: true },
+    /* same name, but somebody has actually filled it in — not ours to delete */
+    { id: "ph2", name: "Supply", role: "Head of Supply", func: "", location: "", relationship: "Colleague", managerId: "", contexts: [], oneToOne: "", nextOneToOne: "", strengths: "", development: "", privateNotes: "", pdr: [], notes: [], active: true },
+  ],
+  workItems: [
+    { id: "w1", title: "Convene the working group", status: "Blocked", mode: "Waiting on", priority: "P2", owner: "Business Change", waitingOn: "Business Change/Dev", contexts: [], flags: {}, notes: [], extra: {}, updatedAt: d(-2), created: d(-9) },
+    { id: "w2", title: "Chase the rota", status: "In Progress", mode: "Waiting on", priority: "P3", owner: "Me", waitingOn: "Louise", contexts: [], flags: {}, notes: [], extra: {}, updatedAt: d(-1), created: d(-4) },
+  ],
+  projects: [], mobs: [], updates: [], lessons: [], meetings: [], okrs: [], sources: [],
+  context: { org: "", people: "", clients: "", rules: "", learned: "" },
+});
+const dm = migrate(deptDoc()).data;
+const dnames = dm.people.map((x) => x.name).sort();
+P("A function named as an owner is not created as a person", !dnames.includes("Business Change"), dnames.join(", "));
+P("Two parties in one field are not created as a person", !dnames.some((n) => n.includes("/")), dnames.join(", "));
+P("A real person named alongside them still is", dnames.includes("Louise"));
+P("A department already filed as a colleague is cleared out", !dm.people.some((x) => x.id === "ph1"));
+P("A record somebody has actually filled in is left alone", dm.people.some((x) => x.id === "ph2"), "Supply has a job title on it");
+P("Re-running the migration changes nothing further", !migrate(JSON.parse(JSON.stringify(dm))).changed);
+
 /* ---------- archive on done ---------- */
 P("Completed work is archived off the board", !!byId("e").archivedAt);
 P("Open work is not archived", !byId("a").archivedAt && !byId("b").archivedAt);

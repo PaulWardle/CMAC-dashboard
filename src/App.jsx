@@ -291,6 +291,7 @@ const STYLES = `
 .personcard.hot { border-left:4px solid #FD0E33; }
 .personcard .pname { font-weight:800; font-size:13.5px; color:#112138; }
 .personcard .prole { font-size:11px; color:#5C6675; margin-bottom:7px; }
+.personcard .plevel { font-size:8.5px; font-weight:800; text-transform:uppercase; letter-spacing:.9px; color:#5C6675; background:#EEF2F5; border-radius:5px; padding:1px 6px; margin-left:7px; vertical-align:middle; }
 .pstats { display:flex; flex-direction:column; gap:2px; font-size:11.5px; color:#5C6675; }
 .pstats b { color:#112138; font-weight:800; }
 .pstats .bad, .pstats .bad b { color:#FD0E33; }
