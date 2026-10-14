@@ -20,7 +20,7 @@ import React, { useState, useMemo } from "react";
 import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
 import { askClaude } from "../lib/claude";
 import {
-  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree,
+  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree, meetingsToProcess,
 } from "../lib/model";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -32,7 +32,7 @@ export default function Meetings({ data, mutate, openItem }) {
   const [sel, setSel] = useState(null);
 
   const meetings = data.meetings || [];
-  const unprocessed = meetings.filter((m) => !m.processed && m.notes);
+  const unprocessed = meetingsToProcess(data);
 
   const create = (date) => {
     const id = uid();

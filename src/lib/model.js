@@ -631,6 +631,14 @@ export const ctxByName = (d, name) => d.contexts.find((c) => c.name.toLowerCase(
 export const personName = (d, id) => (d.people.find((p) => p.id === id) || {}).name || "";
 export const personByName = (d, name) => d.people.find((p) => p.name.toLowerCase() === String(name || "").trim().toLowerCase());
 
+/* ---------- the lists behind the badges ----------
+   A sidebar count and the screen it points at must come from the same
+   predicate, or the badge eventually says 1 over an empty page. These are
+   that predicate, defined once and used by both. */
+export const inboxItems = (d) => d.workItems.filter((w) => w.status === "Inbox" && !isArchived(w));
+export const waitingItems = (d) => d.workItems.filter((w) => isWaiting(w) && isOpen(w));
+export const meetingsToProcess = (d) => (d.meetings || []).filter((m) => !m.processed && m.notes);
+
 /* Everything filed under one context, across every collection. This is
    what makes "give me the current picture in Spain" a query rather than
    a folder someone has to maintain. */

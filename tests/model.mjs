@@ -3,6 +3,7 @@
    against data that cannot be recovered if it gets it wrong. */
 import { migrate, isWaiting, isOpen, personLoad, okrHealth, itemAttention, portfolioAttention, dueBadge, subtaskProgress, todayISO,
   childProjects, parentProject, isTopLevel, canParent, projectTree, descendantIds,
+  inboxItems, waitingItems, meetingsToProcess,
   PROJECT_STAGES, LEGACY_STAGES } from "../src/lib/model.js";
 
 let fails = 0;
@@ -216,6 +217,41 @@ P("A project with strands is not flagged as having no open actions",
 P("Hypercare is available as a project stage", PROJECT_STAGES.includes("Hypercare"));
 P("Rollout is available as a project stage", PROJECT_STAGES.includes("Rollout"));
 P("Hypercare is no longer force-mapped to Delivery", LEGACY_STAGES["Hypercare"] === undefined);
+
+/* ============================================================
+   Badge counts. The sidebar said "1" over an empty Waiting screen
+   because the badge counted every item whose MODE was waiting, while
+   the screen counted only the open ones. Two definitions of one thing.
+   These prove the predicates now exclude what the screens exclude.
+   ============================================================ */
+const B = migrate({
+  v: 3, settings: { displayName: "Paul Wardle" },
+  contexts: [], people: [], okrs: [], sources: [], projects: [], mobs: [], updates: [], lessons: [],
+  meetings: [
+    { id: "m1", title: "Processed", date: d(-2), type: "1:1", contexts: [], people: [], notes: "notes", summary: "", processed: true },
+    { id: "m2", title: "To do", date: d(-1), type: "1:1", contexts: [], people: [], notes: "notes", summary: "", processed: false },
+    { id: "m3", title: "Empty", date: d(-1), type: "1:1", contexts: [], people: [], notes: "", summary: "", processed: false },
+  ],
+  workItems: [
+    { id: "w1", title: "Delivered ask", status: "Done", mode: "Waiting on", waitingOn: "Carlos", priority: "P2",
+      owner: "Paul Wardle", completed: d(-3), created: d(-20), updatedAt: d(-3), contexts: [], flags: {}, notes: [], extra: {} },
+    { id: "w2", title: "Live ask", status: "Planned", mode: "Waiting on", waitingOn: "Judith", priority: "P2",
+      owner: "Paul Wardle", created: d(-10), updatedAt: d(-1), contexts: [], flags: {}, notes: [], extra: {} },
+    { id: "w3", title: "Cancelled ask", status: "Cancelled", mode: "Waiting on", waitingOn: "Kat", priority: "P3",
+      owner: "Paul Wardle", created: d(-30), updatedAt: d(-9), contexts: [], flags: {}, notes: [], extra: {} },
+    { id: "w4", title: "In the inbox", status: "Inbox", mode: "Action", waitingOn: "", priority: "P3",
+      owner: "Paul Wardle", created: d(-2), updatedAt: d(-2), contexts: [], flags: {}, notes: [], extra: {} },
+  ],
+  context: {},
+}).data;
+
+P("A delivered ask does not keep counting as waiting", waitingItems(B).length === 1,
+  waitingItems(B).map((w) => w.title).join(", ") || "none");
+P("A cancelled ask does not count either", !waitingItems(B).some((w) => w.id === "w3"));
+P("The live one does", waitingItems(B).some((w) => w.id === "w2"));
+P("Inbox counts only what is genuinely unprocessed", inboxItems(B).length === 1);
+P("Meetings to process means notes that have not been turned into actions",
+  meetingsToProcess(B).length === 1 && meetingsToProcess(B)[0].id === "m2");
 
 console.log("\n" + "=".repeat(54) + "\n" + (fails ? fails + " FAILED" : "all passed"));
 process.exit(fails ? 1 : 0);

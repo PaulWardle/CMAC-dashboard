@@ -22,7 +22,7 @@ import {
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
   childProjects, parentProject, isTopLevel, isWorkstream, canParent, projectTree, descendantIds,
-  isSupervised, lastReport,
+  isSupervised, lastReport, inboxItems, waitingItems, meetingsToProcess,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -813,7 +813,7 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const top5 = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority)).slice(0, 5);
   const focused = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority));
   const peopleHot = (data.people || []).filter((p) => personLoad(data, p).overdue.length > 0).length;
-  const toProcess = (data.meetings || []).filter((m) => !m.processed && m.notes).length;
+  const toProcess = meetingsToProcess(data).length;
   const doneRecent = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 7);
   const activeProjects = data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage));
   const ragCount = (r) => activeProjects.filter((p) => p.rag === r).length;
@@ -1140,7 +1140,7 @@ function Waiting({ data, mutate, openItem, go }) {
   const [chasePick, setChasePick] = useState(null);
   // Open work only. Mode survives completion, so without this a chased-down
   // item would sit on the list forever after it had actually arrived.
-  const rows = data.workItems.filter((w) => isWaiting(w) && isOpen(w));
+  const rows = waitingItems(data);
   const bucket = (w) => {
     const nc = w.nextChase ? daysUntil(w.nextChase) : null;
     if (nc !== null && nc < 0) return "Overdue for chase";
@@ -3525,7 +3525,7 @@ export default function App({ auth }) {
     mutate(() => fresh, null);
   };
   const alertCount = computeAlerts(data).filter((a) => a.sev >= 2).length;
-  const counts = { capture: data.workItems.filter((w) => w.status === "Inbox").length, waiting: data.workItems.filter((w) => isWaiting(w)).length };
+  const counts = { capture: inboxItems(data).length, waiting: waitingItems(data).length };
 
   const view = (() => {
     switch (nav) {

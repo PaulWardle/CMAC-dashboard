@@ -20,7 +20,7 @@ import { askClaude } from "../lib/claude";
 import { fileToCapture, ACCEPT, MAX_FILES } from "../lib/ingest";
 import {
   PRIORITIES, PRIO_LABEL, TYPES, CORE_TYPES, uid, todayISO, daysSince,
-  ctxNames, personByName, isOpen,
+  ctxNames, personByName, isOpen, inboxItems,
 } from "../lib/model";
 
 /* The brief. Written as instructions to a reader rather than a schema
@@ -87,7 +87,7 @@ export default function Capture({ data, mutate, openItem }) {
   const [answer, setAnswer] = useState("");
   const lastInput = useRef("");
   const fileRef = useRef(null);
-  const inbox = data.workItems.filter((w) => w.status === "Inbox");
+  const inbox = inboxItems(data);
 
   const addFiles = async (fileList) => {
     const incoming = Array.from(fileList || []);

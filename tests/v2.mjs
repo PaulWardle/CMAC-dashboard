@@ -457,6 +457,61 @@ await soft("A meeting is only marked processed after the records exist", async (
   return true;
 });
 
+/* ---------- sidebar badges tell the truth ---------- */
+await soft("A completed ask stops counting in the Waiting badge", async () => {
+  // Create one, then complete it, then check the badge against the screen.
+  await go("Action Board");
+  const col = page.locator('.kcol:has(h4:text-matches("^Not started"))').first();
+  await col.locator('.quickadd input').fill("Badge check item");
+  await col.locator('.quickadd input').press("Enter");
+  await page.waitForTimeout(800);
+  const card = page.locator('.kcard:has-text("Badge check item")').first();
+  await card.click();
+  await page.waitForTimeout(600);
+  await page.locator('.modal div:has(> label.flab:text-is("Waiting on")) input').first().fill("Someone Else");
+  await page.locator('button:text-is("Save changes")').click();
+  await page.waitForTimeout(900);
+
+  const badgeOf = async (label) => {
+    const row = page.locator(".nitem", { has: page.locator(".lbl", { hasText: new RegExp("^" + label + "$") }) }).first();
+    const c = row.locator(".cnt");
+    return (await c.count()) ? parseInt((await c.innerText()).trim(), 10) || 0 : 0;
+  };
+  const rowsOn = async () => {
+    await go("Waiting & Chasing");
+    return page.locator(".tbl tbody tr").count();
+  };
+  if (await badgeOf("Waiting & Chasing") !== await rowsOn()) throw new Error("badge and screen already disagree while open");
+
+  // Complete it — the badge must drop with the row.
+  await go("Waiting & Chasing");
+  await page.locator('.tbl tbody tr:has-text("Badge check item") td.click').first().click();
+  await page.waitForTimeout(600);
+  await page.locator('.modal div:has(> label.flab:text-is("Status")) select').first().selectOption("Done");
+  await page.locator('button:text-is("Save changes")').click();
+  await page.waitForTimeout(1000);
+  const badge = await badgeOf("Waiting & Chasing");
+  const rows = await rowsOn();
+  if (badge !== rows) throw new Error(`badge says ${badge}, screen shows ${rows} — this is the "1 over an empty page" bug`);
+  return `badge ${badge} = ${rows} rows`;
+});
+
+await soft("Every sidebar badge matches the screen it points at", async () => {
+  const check = async (label, countRows) => {
+    const row = page.locator(".nitem", { has: page.locator(".lbl", { hasText: new RegExp("^" + label + "$") }) }).first();
+    const c = row.locator(".cnt");
+    const badge = (await c.count()) ? parseInt((await c.innerText()).trim(), 10) || 0 : 0;
+    await go(label);
+    const n = await countRows();
+    if (badge !== n) throw new Error(`${label}: badge ${badge} vs ${n} on screen`);
+    return `${label} ${badge}`;
+  };
+  const out = [];
+  out.push(await check("Capture", async () => page.locator(".checkline").count()));
+  out.push(await check("Waiting & Chasing", async () => page.locator(".tbl tbody tr").count()));
+  return out.join(" · ");
+});
+
 /* ---------- regression ---------- */
 await soft("Data survives a reload", async () => {
   await page.reload();
