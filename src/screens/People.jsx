@@ -3,15 +3,16 @@
 
    Recurring working relationships, not a CRM. Two jobs:
 
-   1. Delegation. What is this person holding, what is overdue, what
-      has had no update — the thing a one-to-one actually needs.
-   2. Leadership. Strengths, development, PDR notes.
+   One job: what is this person holding, what is overdue, what has had
+   no update, and what did we agree last time — the thing a one-to-one
+   actually needs.
 
-   On (2): this material is held here under explicit sign-off. It is
-   still personal data about named colleagues, so it is fenced off —
-   CONFIDENTIAL_PERSON_FIELDS never reaches the board pack, the
-   newsletter, an export or an AI brief. The fence is enforced in the
-   code that builds those outputs, not by remembering.
+   Performance, development and PDR material was held here and has been
+   removed. Not because it isn't useful, but because this app cannot
+   defend it: no SSO, no audit trail, no retention policy, and no
+   approval to hold employee performance data outside the company's own
+   systems. 1:1 notes stay, and they are a factual record of what was
+   discussed and agreed — not an assessment of the person.
    ============================================================ */
 import React, { useState, useMemo } from "react";
 import { F, Empty, Badge, Rag, askConfirm, askInfo, copyText, fmtD, AutoTa, ContextPicker } from "../ui";
@@ -106,8 +107,7 @@ export default function People({ data, mutate, openItem, openProject, go }) {
 const blankPerson = (name) => ({
   id: uid(), name: String(name).trim(), role: "", func: "", location: "", level: "",
   relationship: "Colleague", managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
-  strengths: "", development: "", privateNotes: "", pdr: [], notes: [],
-  active: true, created: todayISO(),
+  notes: [], active: true, created: todayISO(),
 });
 
 /* Reads a markdown table, a CSV or a tab-separated paste. The header row
@@ -197,6 +197,7 @@ function AddPerson({ onAdd, onCancel }) {
    ============================================================ */
 function PersonPage({ data, person, mutate, openItem, openProject, back }) {
   const [tab, setTab] = useState("Work");
+  const [note, setNote] = useState("");
   const load = personLoad(data, person);
   /* The work this person OWNS, as opposed to the items I have asked them
      for. This is the half that was missing: without it a 1:1 covers the
@@ -204,6 +205,11 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
   const owns = data.projects.filter((p) => String(p.owner || "").trim().toLowerCase() === person.name.toLowerCase());
   const edit = (fn, label) => mutate((d) => { const p = d.people.find((x) => x.id === person.id); if (p) fn(p); return d; }, label);
   const set = (k, v) => edit((p) => { p[k] = v; }, "Updated " + person.name);
+  const addNote = () => {
+    if (!note.trim()) return;
+    edit((p) => { p.notes = [...(p.notes || []), { id: uid(), ts: todayISO(), text: note.trim() }]; }, "1:1 note added");
+    setNote("");
+  };
 
   /* The one-to-one brief. Every line is a record that already exists —
      nothing here is generated, so nothing here can be wrong. */
@@ -258,7 +264,7 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
       </div>
 
       <div className="viewtabs">
-        {["Work", "Details", "Development"].map((t) => (
+        {["Work", "Details"].map((t) => (
           <button key={t} className={"vtab" + (tab === t ? " on" : "")} onClick={() => setTab(t)}>{t}</button>))}
       </div>
 
@@ -291,6 +297,22 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
         <Section title="I am waiting on them for" items={load.waitingOnThem} empty="Nothing outstanding with this person." />
         <Section title="What I owe them" items={load.iOweThem} empty="No commitments recorded to this person. Record one by creating a Commitment and setting 'Made to'." />
         <Section title="Their own open work" items={load.theyOwn} empty="Nothing is currently owned by this person." />
+
+        {/* What was discussed and agreed. A factual running record, so the
+            next 1:1 starts where the last one finished. */}
+        <div className="h2">1:1 notes</div>
+        {!(person.notes || []).length && <div className="sub">Nothing recorded yet. Add what was discussed and agreed as it happens — it is much harder to reconstruct later.</div>}
+        {(person.notes || []).slice().reverse().map((n) => (
+          <div key={n.id || n.ts} className="checkline">
+            <span className="mono">{fmtD(n.ts)}</span>
+            <span style={{ flex: 1 }}>{n.text}</span>
+            <span className="linkish" onClick={() => edit((x) => { x.notes = x.notes.filter((y) => (y.id || y.ts) !== (n.id || n.ts)); }, "Note removed")}>remove</span>
+          </div>))}
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input className="input" placeholder="What was discussed or agreed… (Enter)" value={note} onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNote(); } }} />
+          <button className="btn sm" onClick={addNote}>Add</button>
+        </div>
       </>}
 
       {tab === "Details" && (
@@ -316,85 +338,6 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
           </div>
         </div>)}
 
-      {tab === "Development" && <Development data={data} person={person} edit={edit} set={set} />}
-    </div>
-  );
-}
-
-/* ============================================================
-   Performance and development.
-
-   Held under explicit sign-off. Everything on this tab is fenced out
-   of every outward-facing output — see CONFIDENTIAL_PERSON_FIELDS in
-   src/lib/model.js and the strip in serialiseForAI.
-   ============================================================ */
-function Development({ data, person, edit, set }) {
-  const [note, setNote] = useState("");
-  const [pdr, setPdr] = useState({ period: "", objectives: "", rating: "", notes: "" });
-
-  const addNote = () => {
-    if (!note.trim()) return;
-    edit((p) => { p.notes = [...(p.notes || []), { id: uid(), ts: todayISO(), text: note.trim() }]; }, "Leadership note added");
-    setNote("");
-  };
-  const addPdr = () => {
-    if (!pdr.period.trim()) return;
-    edit((p) => { p.pdr = [...(p.pdr || []), { id: uid(), date: todayISO(), ...pdr }]; }, "PDR record added");
-    setPdr({ period: "", objectives: "", rating: "", notes: "" });
-  };
-
-  return (
-    <div>
-      <div className="notebox" style={{ borderLeft: "4px solid #B45309", marginTop: 10 }}>
-        <b>Confidential.</b> This tab holds personal data about a named colleague. It is excluded from the board pack, the
-        newsletter, every export and anything sent to the AI. Keep it factual and keep it to what you would be content to
-        show the person it is about.
-      </div>
-
-      <div className="h2">Strengths</div>
-      <AutoTa minRows={2} value={person.strengths} onChange={(e) => set("strengths", e.target.value)}
-        placeholder="What they are genuinely good at — the things you would put them on." />
-
-      <div className="h2">Development</div>
-      <AutoTa minRows={2} value={person.development} onChange={(e) => set("development", e.target.value)}
-        placeholder="Where they need to grow, and what would help." />
-
-      <div className="h2">Leadership notes</div>
-      {!(person.notes || []).length && <div className="sub">No notes yet. Add observations as they happen — they are much harder to reconstruct at PDR time.</div>}
-      {(person.notes || []).slice().reverse().map((n) => (
-        <div key={n.id || n.ts} className="checkline">
-          <span className="mono">{fmtD(n.ts)}</span>
-          <span style={{ flex: 1 }}>{n.text}</span>
-          <span className="linkish" onClick={() => edit((p) => { p.notes = p.notes.filter((x) => (x.id || x.ts) !== (n.id || n.ts)); }, "Note removed")}>remove</span>
-        </div>))}
-      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-        <input className="input" placeholder="Add a dated observation… (Enter)" value={note} onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNote(); } }} />
-        <button className="btn sm" onClick={addNote}>Add</button>
-      </div>
-
-      <div className="h2">PDR history</div>
-      {!(person.pdr || []).length && <div className="sub">No PDR records yet.</div>}
-      {(person.pdr || []).slice().reverse().map((r) => (
-        <div key={r.id} className="card" style={{ marginBottom: 8 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-            <b>{r.period}</b>
-            {r.rating && <span className="chip">{r.rating}</span>}
-            <span className="sub" style={{ margin: 0, marginLeft: "auto" }}>{fmtD(r.date)}</span>
-            <span className="linkish" onClick={() => edit((p) => { p.pdr = p.pdr.filter((x) => x.id !== r.id); }, "PDR record removed")}>remove</span>
-          </div>
-          {r.objectives && <div style={{ fontSize: 12.5, marginTop: 6 }}><b>Objectives:</b> {r.objectives}</div>}
-          {r.notes && <div style={{ fontSize: 12.5, marginTop: 4, whiteSpace: "pre-wrap" }}>{r.notes}</div>}
-        </div>))}
-      <div className="card">
-        <div className="frow">
-          <F label="Period"><input className="input" value={pdr.period} onChange={(e) => setPdr({ ...pdr, period: e.target.value })} placeholder="e.g. 2026 mid-year" /></F>
-          <F label="Rating / outcome"><input className="input" value={pdr.rating} onChange={(e) => setPdr({ ...pdr, rating: e.target.value })} /></F>
-          <F label="Objectives" span><AutoTa value={pdr.objectives} onChange={(e) => setPdr({ ...pdr, objectives: e.target.value })} /></F>
-          <F label="Notes" span><AutoTa value={pdr.notes} onChange={(e) => setPdr({ ...pdr, notes: e.target.value })} /></F>
-        </div>
-        <button className="btn pri sm" style={{ marginTop: 8 }} disabled={!pdr.period.trim()} onClick={addPdr}>Add PDR record</button>
-      </div>
     </div>
   );
 }

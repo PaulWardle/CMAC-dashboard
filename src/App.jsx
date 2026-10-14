@@ -2784,7 +2784,7 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
       <div className="h2">Data</div>
       <div className="card">
         <div className="toolrow" style={{ marginBottom: 0 }}>
-          <button className="btn pri" onClick={exportJson}>Export full backup (JSON)</button>
+          <button className="btn pri" onClick={exportJson} title="Everything in the workspace, including anything marked private. Treat the file as confidential.">Export full backup (JSON)</button>
           <button className="btn" onClick={() => fileRef.current?.click()}>Import backup (JSON)</button>
           <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => { if (e.target.files?.[0]) importJson(e.target.files[0]); e.target.value = ""; }} />
           <button className="btn" onClick={exportCsv}>Export work items (CSV)</button>
@@ -2801,11 +2801,9 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
    ============================================================ */
 /* The workspace, as the AI sees it.
 
-   One hard boundary: CONFIDENTIAL_PERSON_FIELDS — strengths, development,
-   private notes and PDR history — never appear here. Those are personal
-   data about named colleagues, and the fence is enforced by this function
-   rather than by remembering not to ask. People appear only as names,
-   roles and what they are holding.                                      */
+   People appear only as names, roles and what they are holding. This is
+   an allowlist, not a redaction pass: a field that is not named here
+   cannot leak by being forgotten.                                       */
 function serialiseForAI(data) {
   const lim = (s, n) => (s || "").slice(0, n);
   const items = openItems(data).map((w) => ({ title: w.title, type: w.type, status: w.status, mode: w.mode, priority: w.priority, owner: w.owner, waitingOn: w.waitingOn || undefined, due: w.due || undefined, project: projName(data, w.project) || undefined, mob: mobName(data, w.mob) || undefined, contexts: ctxNames(data, w.contexts).join(", ") || undefined, nextAction: lim(w.nextAction, 80) || undefined, blocker: lim(w.blocker, 80) || undefined, madeTo: w.extra?.madeTo }));
@@ -3185,7 +3183,7 @@ Ground every answer ONLY in the workspace data below, the conversation and any a
 HOW THE DATA IS SHAPED — read this before answering about people or work:
 - Every item has a STATUS (where the work has got to) and a MODE. Mode "Waiting on" means somebody else owes it and the user is monitoring; "Action" means it is the user's own. The two are independent: an item can be Blocked AND waiting on a named person. To answer "what am I waiting on from X", look for mode "Waiting on" with waitingOn = X, whatever the status says.
 - "contexts" are operational lenses — a geography, function, client or supplier. An item can carry several. Use them for questions like "what is happening in Spain" or "what relates to Supply".
-- "people" lists names, roles and how much each is holding. It deliberately contains NO performance, development or PDR material: that is confidential and is not available to you. If asked about someone's performance or development, say plainly that the system does not expose it to you — do not infer it from their overdue count.
+- "people" lists names, roles and how much each is holding. The system holds no performance, development or PDR material at all. If asked about someone's performance or development, say plainly that it is not recorded here — do not infer it from their overdue count.
 - Goal health is calculated from progress against the deadline, not from the percentage alone, so a goal can be most of the way there and still off track.
 - Project and mobilisation RAG is calculated from overdue work, blockers, how long since anything moved and how close the target is.
 - A PROJECT is a piece of work with its own lifecycle, owner, dates and updates. A WORKSTREAM is simply a project with a parent. The structure is two levels and no deeper. A WORK ITEM is a single task, filed under a project or standing alone. If the user says something logged as a task is really a bigger piece of work, use convert_item_to_project — do not create a second record beside it.

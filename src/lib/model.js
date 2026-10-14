@@ -139,12 +139,12 @@ export const LEGACY_DECISION = { "Draft": "Required", "Submitted": "Awaiting inf
    the two that nothing else could see were the ones driving a whole screen. */
 
 /* ---------- people ----------
-   Recurring working relationships, not a CRM. Performance and
-   development material is held here under explicit sign-off; the
-   CONFIDENTIAL_PERSON_FIELDS list is what every outward-facing
-   output (board pack, newsletter, export, AI brief) must strip. */
+   Recurring working relationships, not a CRM. A person record carries
+   who they are and what they are holding. It deliberately holds no
+   performance, development or PDR material: that belongs in the
+   company's own HR systems, which have the access control, audit trail
+   and retention policy this app does not. */
 export const RELATIONSHIPS = ["Direct report", "Stakeholder", "Colleague", "Client", "Supplier", "Other"];
-export const CONFIDENTIAL_PERSON_FIELDS = ["strengths", "development", "pdr", "privateNotes"];
 
 /* ---------- meetings ---------- */
 export const MEETING_TYPES = ["1:1", "Operational review", "Project", "Mobilisation", "Leadership", "Client / supplier", "Other"];
@@ -633,18 +633,24 @@ export function migrate(d) {
     seen.forEach((name) => {
       d.people.push({
         id: uid(), name, role: "", func: "", location: "", level: "", relationship: "Colleague",
-        managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
-        strengths: "", development: "", privateNotes: "", pdr: [], notes: [],
+        managerId: "", contexts: [], oneToOne: "", nextOneToOne: "", notes: [],
         active: true, created: todayISO(),
       });
     });
     changed = true;
   }
+  /* Performance, development and PDR material is removed on load. This app
+     has no SSO, no audit trail, no retention policy and no approval to hold
+     employee performance data outside the company's own systems, so it does
+     not hold it. 1:1 notes stay: a factual record of what was discussed and
+     agreed is not an assessment of the person. */
   d.people.forEach((p) => {
     if (typeof p.level !== "string") { p.level = ""; changed = true; }
-    if (!Array.isArray(p.pdr)) { p.pdr = []; changed = true; }
     if (!Array.isArray(p.notes)) { p.notes = []; changed = true; }
     if (!Array.isArray(p.contexts)) { p.contexts = []; changed = true; }
+    ["strengths", "development", "privateNotes", "pdr"].forEach((k) => {
+      if (k in p) { delete p[k]; changed = true; }
+    });
   });
 
   /* Clean up a self-record created before the display name was known. This
@@ -659,8 +665,7 @@ export function migrate(d) {
      has a job title, a location, a note or anything else on it, it is
      somebody's record and it stays, whatever it is called. */
   const untouched = (p) => !p.role && !p.func && !p.location && !p.level && !p.oneToOne && !p.nextOneToOne
-    && !p.strengths && !p.development && !p.privateNotes && !p.managerId
-    && !(p.notes || []).length && !(p.pdr || []).length && !(p.contexts || []).length
+    && !p.managerId && !(p.notes || []).length && !(p.contexts || []).length
     && (!p.relationship || p.relationship === "Colleague");
   const bogus = d.people.filter((p) => ctxNameSet.has(String(p.name).trim().toLowerCase()) && untouched(p));
   if (bogus.length) {

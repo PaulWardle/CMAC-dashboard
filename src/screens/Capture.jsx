@@ -227,7 +227,6 @@ export default function Capture({ data, mutate, openItem }) {
         d.people.push({
           id: uid(), name: p.name, role: p.role || "", func: "", location: "", relationship: "Colleague",
           managerId: "", contexts: [], oneToOne: "", nextOneToOne: "",
-          strengths: "", development: "", privateNotes: "", pdr: [],
           notes: p.why ? [{ id: uid(), ts: todayISO(), text: p.why }] : [],
           active: true, created: todayISO(),
         });

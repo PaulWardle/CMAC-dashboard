@@ -226,33 +226,30 @@ await soft("Waiting is a mode, so it survives alongside Blocked", async () => {
   return "blocked AND waiting, both true";
 });
 
-/* ---------- the confidentiality fence ---------- */
-await soft("Development notes save on a person", async () => {
-  await page.locator('.vtab:text-is("Development")').click();
-  await page.waitForTimeout(300);
-  await page.locator("textarea").first().fill("CONFIDENTIALSTRENGTH calm under disruption");
-  await page.waitForTimeout(700);
-  await page.locator("textarea").nth(1).fill("CONFIDENTIALDEV needs to delegate sooner");
+/* ---------- no performance data, and the AI fence ---------- */
+await soft("There is nowhere to record performance or PDR material", async () => {
+  const tabs = await page.locator(".vtab").allInnerTexts();
+  if (tabs.some((t) => /Development/i.test(t))) throw new Error("the Development tab is still there: " + tabs.join("|"));
+  const body = await page.locator("body").innerText();
+  if (/PDR|Strengths/i.test(body)) throw new Error("performance wording still on the person page");
+  return tabs.join(" / ");
+});
+
+await soft("A 1:1 note saves and survives a reload", async () => {
+  await page.locator('input[placeholder*="discussed or agreed"]').fill("Agreed to send the Q4 rota by Friday");
+  await page.keyboard.press("Enter");
   await page.waitForTimeout(900);
   await page.reload();
   await page.waitForSelector(".nitem", { timeout: 15000 });
   await go("People");
   await page.locator(".personcard", { hasText: "Carlos Mendez" }).first().click();
-  await page.waitForTimeout(400);
-  await page.locator('.vtab:text-is("Development")').click();
-  await page.waitForTimeout(300);
-  const v = await page.locator("textarea").first().inputValue();
-  if (!/CONFIDENTIALSTRENGTH/.test(v)) throw new Error("strengths did not persist");
+  await page.waitForTimeout(500);
+  const body = await page.locator("body").innerText();
+  if (!/Agreed to send the Q4 rota/.test(body)) throw new Error("the 1:1 note did not persist");
   return true;
 });
 
-await soft("Confidential people data never reaches the AI brief", async () => {
-  const brief = await page.evaluate(() => {
-    const raw = localStorage.getItem("cmac-occ-v1");
-    return raw || "";
-  });
-  if (!/CONFIDENTIALSTRENGTH/.test(brief)) throw new Error("test setup wrong — the note is not even stored");
-  // Ask a question, then read what was actually sent.
+await soft("A person reaches the AI as a name and a workload, nothing more", async () => {
   let sent = "";
   probe = async (route) => {
     sent = route.request().postData() || "";
@@ -263,12 +260,12 @@ await soft("Confidential people data never reaches the AI brief", async () => {
   await page.keyboard.press("Enter");
   await page.waitForTimeout(1500);
   if (!sent) throw new Error("no AI request captured");
-  if (/CONFIDENTIALSTRENGTH|CONFIDENTIALDEV/.test(sent)) throw new Error("PERSONAL DATA LEAKED into the AI request");
+  if (/strengths|privateNotes|"pdr"/.test(sent)) throw new Error("a removed field is still being serialised");
   if (!/Carlos Mendez/.test(sent)) throw new Error("the person is missing entirely — the fence is too wide");
   await page.unroute("**/api/ai", probe);
   await page.locator("body").click({ position: { x: 700, y: 600 } });
   await page.waitForTimeout(250);
-  return "name present, development notes absent";
+  return "name present, no personal fields";
 });
 
 /* ---------- board behaviour ---------- */

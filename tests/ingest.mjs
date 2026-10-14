@@ -15,7 +15,7 @@ page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.
 
 await page.goto(BASE);
 await page.waitForSelector(".nitem", { timeout: 20000 });
-await page.locator(".nitem", { hasText: /^Capture Inbox/ }).first().click();
+await page.locator(".nitem", { hasText: /^Capture/ }).first().click();
 await page.waitForTimeout(500);
 
 const input = page.locator('input[type="file"][multiple]').first();
@@ -58,7 +58,7 @@ await soft("The picker offers media types, not just extensions", async () => {
 await soft("Going over the attachment limit says which files were skipped", async () => {
   await page.reload();
   await page.waitForSelector(".nitem", { timeout: 15000 });
-  await page.locator(".nitem", { hasText: /^Capture Inbox/ }).first().click();
+  await page.locator(".nitem", { hasText: /^Capture/ }).first().click();
   await page.waitForTimeout(400);
   const inp = page.locator('input[type="file"][multiple]').first();
   const many = Array.from({ length: 5 }, () => DIR + "notes-a.txt");
@@ -75,7 +75,7 @@ await soft("Going over the attachment limit says which files were skipped", asyn
 await soft("A failed file does not block the ones after it", async () => {
   await page.reload();
   await page.waitForSelector(".nitem", { timeout: 15000 });
-  await page.locator(".nitem", { hasText: /^Capture Inbox/ }).first().click();
+  await page.locator(".nitem", { hasText: /^Capture/ }).first().click();
   await page.waitForTimeout(400);
   const inp = page.locator('input[type="file"][multiple]').first();
   // big.pdf first, then two good files

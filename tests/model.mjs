@@ -62,7 +62,9 @@ const names = m.people.map((p) => p.name).sort();
 P("People are harvested from owners and waiting-ons", names.includes("Carlos") && names.includes("Judith"), names.join(", "));
 P("The signed-in user is NOT created as a colleague", !names.includes("Paul Wardle"));
 P("The placeholder owner 'Me' is not created as a person", !names.includes("Me"));
-P("Every person has the confidential fields initialised", m.people.every((p) => Array.isArray(p.pdr) && "strengths" in p));
+P("No person record carries performance, development or PDR material",
+  m.people.every((p) => !("strengths" in p) && !("development" in p) && !("privateNotes" in p) && !("pdr" in p)));
+P("1:1 notes survive", m.people.every((p) => Array.isArray(p.notes)));
 
 /* A department is not a colleague. An owner or waiting-on may name a
    function — that is deliberate — and it must not turn into a person with
@@ -94,6 +96,7 @@ P("Two parties in one field are not created as a person", !dnames.some((n) => n.
 P("A real person named alongside them still is", dnames.includes("Louise"));
 P("A department already filed as a colleague is cleared out", !dm.people.some((x) => x.id === "ph1"));
 P("A record somebody has actually filled in is left alone", dm.people.some((x) => x.id === "ph2"), "Supply has a job title on it");
+P("Stored PDR material is stripped on load", dm.people.every((x) => !("pdr" in x) && !("strengths" in x)));
 P("Re-running the migration changes nothing further", !migrate(JSON.parse(JSON.stringify(dm))).changed);
 
 /* ---------- archive on done ---------- */
