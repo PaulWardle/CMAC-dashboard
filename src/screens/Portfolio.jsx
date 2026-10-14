@@ -13,7 +13,7 @@
    ============================================================ */
 import React, { useState, useMemo } from "react";
 import { Rag, Stat, Empty, fmtD } from "../ui";
-import { portfolioAttention, ctxNames, daysUntil, isOpen, isOverdue, prioRank, childProjects, isTopLevel, descendantIds } from "../lib/model";
+import { portfolioAttention, ctxNames, daysUntil, isOpen, isOverdue, prioRank, childProjects, isTopLevel, descendantIds, isSupervised, lastReport } from "../lib/model";
 
 const SORTS = {
   "Needs me": (a, b) => b.h.score - a.h.score,
@@ -26,6 +26,7 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
   const [sort, setSort] = useState("Needs me");
   const [ctx, setCtx] = useState("");
   const [kind, setKind] = useState("All");
+  const [whose, setWhose] = useState("All");
   const [showClosed, setShowClosed] = useState(false);
   const [showSubs, setShowSubs] = useState(false);
 
@@ -41,9 +42,11 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
     ];
     if (!showClosed) all = all.filter((r) => !["Closed", "Cancelled"].includes(r.e.stage));
     if (kind !== "All") all = all.filter((r) => r.kind === (kind === "Projects" ? "project" : "mob"));
+    if (whose === "Mine") all = all.filter((r) => !isSupervised(data, r.e));
+    if (whose === "Supervised") all = all.filter((r) => isSupervised(data, r.e));
     if (ctx) all = all.filter((r) => (r.e.contexts || []).includes(ctx));
     return all.sort(SORTS[sort] || SORTS["Needs me"]);
-  }, [data, sort, ctx, kind, showClosed, showSubs]);
+  }, [data, sort, ctx, kind, whose, showClosed, showSubs]);
 
   const red = rows.filter((r) => r.h.rag === "Red").length;
   const amber = rows.filter((r) => r.h.rag === "Amber").length;
@@ -71,6 +74,8 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
 
       <div className="toolrow">
         {["All", "Projects", "Mobilisations"].map((k) => <button key={k} className={"btn sm" + (kind === k ? " pri" : "")} onClick={() => setKind(k)}>{k}</button>)}
+        <span className="vsep" />
+        {["All", "Mine", "Supervised"].map((k) => <button key={k} className={"btn sm" + (whose === k ? " pri" : "")} onClick={() => setWhose(k)}>{k === "All" ? "Everyone" : k}</button>)}
         <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>{Object.keys(SORTS).map((s) => <option key={s}>Sort: {s}</option>)}</select>
         <select className="select" value={ctx} onChange={(e) => setCtx(e.target.value)}>
           <option value="">Context: all</option>
@@ -97,6 +102,7 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
                 <span className="chip">{k === "mob" ? "Mobilisation" : "Project"}</span>
                 <span className="chip">{e.stage}</span>
                 {e.blocked && <span className="chip blocked">blocked</span>}
+                {isSupervised(data, e) && <span className="chip sup">{e.owner}</span>}
                 {h.children > 0 && <span className="chip sub">{h.children} workstream{h.children > 1 ? "s" : ""}{h.needyChildren ? ` · ${h.needyChildren} need attention` : ""}</span>}
                 {k === "project" && !isTopLevel(data, e) && <span className="chip">under {(data.projects.find((x) => x.id === e.parentId) || {}).name}</span>}
                 {ctxNames(data, e.contexts).map((c) => <span key={c} className="chip ctx">{c}</span>)}
@@ -108,8 +114,16 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
               </div>
             </div>
             <div className="pfnums">
-              <div><b>{h.open}</b><i>open</i></div>
-              <div className={h.overdue ? "bad" : ""}><b>{h.overdue}</b><i>overdue</i></div>
+              {isSupervised(data, e) ? (() => {
+                const r = lastReport(data, e);
+                return <>
+                  <div className={r && r.days > 21 ? "bad" : ""}><b>{r ? r.days + "d" : "—"}</b><i>since update</i></div>
+                  <div><b>{e.progress}%</b><i>{e.progressBasis ? "per " + e.progressBasis.split(",")[0] : "progress"}</i></div>
+                </>;
+              })() : <>
+                <div><b>{h.open}</b><i>open</i></div>
+                <div className={h.overdue ? "bad" : ""}><b>{h.overdue}</b><i>overdue</i></div>
+              </>}
               <div>
                 <b>{left === null ? "—" : left < 0 ? `${Math.abs(left)}d late` : `${left}d`}</b>
                 <i>{k === "mob" ? "to go-live" : "to target"}</i>

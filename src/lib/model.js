@@ -273,6 +273,26 @@ export function projectTree(d, filter = () => true) {
   return out;
 }
 
+/* Work somebody else owns is supervised, not managed. The distinction
+   matters because the signals differ: for my own work the question is what
+   is overdue, and for Claire's it is when she last told me anything. Judging
+   her project on actions missing from MY app is meaningless — her actions
+   live in her world. */
+export const isSupervised = (d, e) => {
+  const me = ((d.settings || {}).displayName || "").trim().toLowerCase();
+  const owner = String(e.owner || "").trim().toLowerCase();
+  return !!owner && owner !== "me" && owner !== me;
+};
+/* When the owner last said something, as opposed to when the record was
+   last touched. An edit is not an update. */
+export function lastReport(d, e) {
+  const ids = new Set([e.id, ...descendantIds(d, e.id)]);
+  const dates = (d.updates || []).filter((u) => ids.has(u.project)).map((u) => u.date).filter(Boolean);
+  if (e.progressAt) dates.push(e.progressAt);
+  const latest = dates.sort().pop();
+  return latest ? { date: latest, days: daysSince(latest) } : null;
+}
+
 /* A project or mobilisation's health, from its own facts plus the work
    filed under it. Returns a RAG so the portfolio can be scanned at a
    glance, and the reasons so it can be challenged.
@@ -303,7 +323,19 @@ export function portfolioAttention(d, entity, kind, settings = {}) {
   else if (left !== null && left <= 7) { score += 10; reasons.push(`target in ${left} days`); }
 
   const kids = kind === "project" ? childProjects(d, entity.id) : [];
-  if (!items.length && !kids.length && !["Closed", "Cancelled", "Idea"].includes(entity.stage)) { score += 8; reasons.push("no open actions"); }
+  const supervised = kind === "project" && isSupervised(d, entity);
+  if (!items.length && !kids.length && !supervised && !["Closed", "Cancelled", "Idea"].includes(entity.stage)) { score += 8; reasons.push("no open actions"); }
+  if (supervised) {
+    /* Silence is the signal. An absence of actions is not. */
+    const rep = lastReport(d, entity);
+    const quiet = rep ? rep.days : daysSince(entity.created || entity.start || entity.updatedAt);
+    const limit = settings.staleProject || 21;
+    if (quiet !== null && quiet > limit) { score += Math.min(28, (quiet - limit) * 2); reasons.push(`no update from ${entity.owner} for ${quiet} days`); }
+    if (entity.progress > 0 && entity.progressAt) {
+      const age = daysSince(entity.progressAt);
+      if (age !== null && age > 30) { score += 10; reasons.push(`progress figure is ${age} days old`); }
+    }
+  }
 
   /* Roll the strands up. A parent takes the worst child's score if that is
      higher than its own, so an umbrella never reads healthier than the
@@ -374,6 +406,16 @@ export function migrate(d) {
      to the calculation. */
   [...d.projects, ...d.mobs].forEach((e) => {
     if (e.ragOverride === undefined) { e.ragOverride = ""; changed = true; }
+  });
+  /* A bare percentage looks like fact when it is a recollection from a
+     conversation three weeks ago. These two say whose number it is and how
+     old — which is also what makes it safe to quote. */
+  d.projects.forEach((p) => {
+    if (p.progressBasis === undefined) { p.progressBasis = ""; changed = true; }
+    if (p.progressAt === undefined) { p.progressAt = p.progress ? (p.updatedAt || todayISO()) : ""; changed = true; }
+    if (p.measureLabel === undefined) { p.measureLabel = ""; changed = true; }
+    if (p.measureCurrent === undefined) { p.measureCurrent = ""; changed = true; }
+    if (p.measureTarget === undefined) { p.measureTarget = ""; changed = true; }
   });
 
   const ctxByName = {};

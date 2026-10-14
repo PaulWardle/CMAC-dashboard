@@ -22,6 +22,7 @@ import {
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
   childProjects, parentProject, isTopLevel, isWorkstream, canParent, projectTree, descendantIds,
+  isSupervised, lastReport,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -247,7 +248,23 @@ const STYLES = `
 .pfnums .bad b { color:#FD0E33; }
 .pfnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
 .chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
+.quickadd { display:flex; gap:6px; margin:8px 0; }
+.quickadd .input { flex:1; }
+.quickadd .select { width:auto; min-width:110px; }
+.kbody .quickadd { margin:4px 0 0; }
+.kbody .quickadd .input { font-size:11.5px; padding:4px 8px; background:transparent; border-style:dashed; }
+.kbody .quickadd .input:focus { background:#fff; border-style:solid; }
+.kbody .quickadd .btn { display:none; }
+.kbody .quickadd .input:focus ~ .btn { display:inline-flex; }
+.tick { appearance:none; width:14px; height:14px; min-width:14px; border:1.5px solid #B9C2CC; border-radius:4px; cursor:pointer; position:relative; vertical-align:-2px; margin-right:7px; background:#fff; flex:none; }
+.tick:hover { border-color:#1A7F44; }
+.tick:checked { background:#1A7F44; border-color:#1A7F44; }
+.tick:checked::after { content:"✓"; position:absolute; inset:0; color:#fff; font-size:10px; line-height:11px; text-align:center; font-weight:900; }
+.donerow td { opacity:.5; text-decoration:line-through; }
+.kcard .kt { display:flex; align-items:flex-start; }
 .chip.sub { background:#EFEAF8; border-color:#DCD2EF; color:#5B3FA0; }
+.chip.sup { background:#E8F1EC; border-color:#CBE2D5; color:#1A6F45; font-weight:700; }
+.vsep { width:1px; height:18px; background:#DCE3E8; margin:0 2px; }
 .crumb { font-size:12px; font-weight:700; color:#5C6675; cursor:pointer; }
 .crumb:hover { color:#112138; text-decoration:underline; }
 .chip.overdue { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; font-weight:700; }
@@ -400,6 +417,61 @@ pre.report { white-space:pre-wrap; font-family:inherit; font-size:12.5px; backgr
 
 
 
+
+/* Add a task where you are standing. One line, Enter, done — a modal with
+   twelve fields is the wrong price for "chase Claire on Thursday". */
+function QuickAdd({ data, mutate, preset, placeholder, people }) {
+  const [t, setT] = useState("");
+  const [who, setWho] = useState("");
+  const add = () => {
+    const title = t.trim();
+    if (!title) return;
+    mutate((d) => {
+      d.workItems.push(blankItem(d, {
+        title,
+        owner: who || (d.settings.displayName || "Me"),
+        waitingOn: who && who !== (d.settings.displayName || "Me") ? who : "",
+        mode: who && who !== (d.settings.displayName || "Me") ? "Waiting on" : "Action",
+        ...preset,
+      }));
+      return d;
+    }, "Added: " + title);
+    setT("");
+  };
+  return (
+    <div className="quickadd">
+      <input className="input" value={t} placeholder={placeholder || "Add a task — type it and press Enter"}
+        onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+      {people && (
+        <select className="select" value={who} onChange={(e) => setWho(e.target.value)} title="Whose is it?">
+          <option value="">Mine</option>
+          {data.people.map((x) => <option key={x.id} value={x.name}>Waiting on {x.name}</option>)}
+        </select>)}
+      <button className="btn sm" onClick={add} disabled={!t.trim()}>Add</button>
+    </div>
+  );
+}
+
+/* Tick to complete. The whole interaction, from anywhere an item is
+   listed — no modal, no status dropdown, no save. Ticking a completed item
+   again reopens it. */
+const Tick = ({ w, mutate }) => {
+  const done = w.status === "Done";
+  return (
+    <input
+      type="checkbox" className="tick" checked={done} title={done ? "Reopen" : "Mark done"}
+      onClick={(e) => e.stopPropagation()}
+      onChange={() => mutate((d) => {
+        const x = d.workItems.find((i) => i.id === w.id);
+        if (!x) return d;
+        if (x.status === "Done") { x.status = "Planned"; x.completed = ""; x.archivedAt = ""; }
+        else { x.status = "Done"; x.completed = todayISO(); x.archivedAt = todayISO(); }
+        x.updatedAt = todayISO();
+        return d;
+      }, (done ? "Reopened: " : "Done: ") + w.title)}
+    />
+  );
+};
 
 /* Project options in tree order, indented, so a strand sits visibly under
    its umbrella instead of alphabetically adrift from it. */
@@ -682,7 +754,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
 }
 
 /* generic work-item table */
-function ItemsTable({ data, rows, onOpen, cols }) {
+function ItemsTable({ data, rows, onOpen, cols, mutate }) {
   const enriched = useMemo(() => rows.map((w) => ({ ...w, _parent: parentLabel(data, w), _prio: prioRank(w.priority) })), [rows, data]);
   const [sorted, th] = useSortable(enriched, "_prio");
   const all = cols || ["title", "type", "status", "priority", "owner", "parent", "due", "updated"];
@@ -690,6 +762,7 @@ function ItemsTable({ data, rows, onOpen, cols }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="tbl"><thead><tr>
+        {mutate && <th style={{ width: 28 }} />}
         {all.includes("title") && th("title", "Title")}
         {all.includes("type") && th("type", "Type")}
         {all.includes("status") && th("status", "Status")}
@@ -703,7 +776,8 @@ function ItemsTable({ data, rows, onOpen, cols }) {
         {all.includes("updated") && th("updatedAt", "Updated")}
       </tr></thead>
       <tbody>{sorted.map((w) => (
-        <tr key={w.id} className="click" onClick={() => onOpen(w)}>
+        <tr key={w.id} className={"click" + (w.status === "Done" ? " donerow" : "")} onClick={() => onOpen(w)}>
+          {mutate && <td onClick={(e) => e.stopPropagation()}><Tick w={w} mutate={mutate} /></td>}
           {all.includes("title") && <td><Rag v={w.rag} />{w.title}{w.demo ? <span className="chip" style={{ marginLeft: 5 }}>demo</span> : null}</td>}
           {all.includes("type") && <td>{w.type}</td>}
           {all.includes("status") && <td>{w.status}</td>}
@@ -938,7 +1012,7 @@ function ItemCard({ data, w, onOpen, onDragStart, mutate }) {
   };
   return (
     <div className="kcard" draggable onDragStart={onDragStart} onClick={() => onOpen(w)}>
-      <div className="kt">{w.title}</div>
+      <div className="kt"><Tick w={w} mutate={mutate} />{w.title}</div>
       <div className="kmeta">
         <Badge p={w.priority} />
         {badge && <span className={"duechip " + badge.tone}>{badge.text}</span>}
@@ -1035,6 +1109,10 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
                 {items.map((w) => <ItemCard key={w.id} data={data} w={w} onOpen={openItem} mutate={mutate}
                   onDragStart={(e) => e.dataTransfer.setData("id", w.id)} />)}
                 {!items.length && <div className="kempty">Nothing here</div>}
+                {col.key !== "Waiting" && (
+                  <QuickAdd data={data} mutate={mutate}
+                    preset={{ status: col.key === "Inbox" ? "Inbox" : col.key, ...(f.project ? { project: f.project } : {}), ...(f.context ? { contexts: [f.context] } : {}) }}
+                    placeholder="+ Add" />)}
               </div>
             </div>);
         })}
@@ -1045,7 +1123,7 @@ function ActionBoard({ data, mutate, openItem, newItem }) {
             <div className="kempty">Drop here to complete.<br />Completed work goes straight to Archive &amp; History rather than piling up on the board.</div>
             {doneToday.map((w) => (
               <div key={w.id} className="kcard muted" onClick={() => openItem(w)}>
-                <div className="kt">{w.title}</div>
+                <div className="kt"><Tick w={w} mutate={mutate} />{w.title}</div>
                 <div className="kmeta"><span className="chip">done today</span></div>
               </div>))}
           </div>
@@ -1264,7 +1342,10 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
               <div className="sub" style={{ margin: 0 }}>This project has {childProjects(data, p.id).length} workstream(s) of its own, so it stays top level. Structure goes two deep and no further.</div>
             </F>)}
           <F label="Code"><input className="input" value={p.code} onChange={(e) => set("code", e.target.value)} /></F>
-          <F label="Owner"><input className="input" value={p.owner} onChange={(e) => set("owner", e.target.value)} /></F>
+          <F label="Owner — whose work it is">
+            <input className="input" list="proj-owners" value={p.owner} onChange={(e) => set("owner", e.target.value)} placeholder="leave blank if it is yours" />
+            <datalist id="proj-owners">{data.people.map((x) => <option key={x.id} value={x.name} />)}</datalist>
+          </F>
           <F label="Sponsor"><input className="input" value={p.sponsor} onChange={(e) => set("sponsor", e.target.value)} /></F>
           <F label="Stage"><select className="select" value={p.stage} onChange={(e) => set("stage", e.target.value)}>
             {(PROJECT_STAGES.includes(p.stage) || !p.stage ? PROJECT_STAGES : [p.stage, ...PROJECT_STAGES]).map((s) => <option key={s}>{s}</option>)}
@@ -1285,7 +1366,30 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
           <F label="Start"><input type="date" className="input" value={p.start} onChange={(e) => set("start", e.target.value)} /></F>
           <F label="Target date"><input type="date" className="input" value={p.target} onChange={(e) => set("target", e.target.value)} /></F>
           <F label="Forecast completion"><input type="date" className="input" value={p.forecast} onChange={(e) => set("forecast", e.target.value)} /></F>
-          <F label={"Progress (" + p.progress + "%)"}><input type="range" min="0" max="100" step="5" value={p.progress} onChange={(e) => set("progress", +e.target.value)} style={{ width: "100%" }} /></F>
+          <F label={"Progress (" + p.progress + "%)"} span>
+            <input type="range" min="0" max="100" step="5" value={p.progress}
+              onChange={(e) => setP((x) => ({ ...x, progress: +e.target.value, progressAt: todayISO() }))} style={{ width: "100%" }} />
+            <div className="frow" style={{ marginTop: 6 }}>
+              <F label="Where the figure came from">
+                <input className="input" list="prog-basis" value={p.progressBasis || ""} onChange={(e) => set("progressBasis", e.target.value)} placeholder="e.g. Claire, 1:1" />
+                <datalist id="prog-basis"><option value="My estimate" />{data.people.map((x) => <option key={x.id} value={x.name} />)}</datalist>
+              </F>
+              <F label="As at"><input type="date" className="input" value={p.progressAt || ""} onChange={(e) => set("progressAt", e.target.value)} /></F>
+            </div>
+            <div className="frow" style={{ marginTop: 2 }}>
+              <F label="Or count it"><input className="input" value={p.measureLabel || ""} onChange={(e) => set("measureLabel", e.target.value)} placeholder="e.g. SOPs published" /></F>
+              <F label="Done"><input className="input" type="number" value={p.measureCurrent} onChange={(e) => setP((x) => {
+                const cur = e.target.value, tgt = Number(x.measureTarget);
+                const pct = Number(cur) >= 0 && tgt > 0 ? Math.round(Math.min(100, (Number(cur) / tgt) * 100)) : x.progress;
+                return { ...x, measureCurrent: cur, progress: pct, progressAt: todayISO() };
+              })} /></F>
+              <F label="Of"><input className="input" type="number" value={p.measureTarget} onChange={(e) => setP((x) => {
+                const tgt = e.target.value, cur = Number(x.measureCurrent);
+                const pct = Number(tgt) > 0 && cur >= 0 ? Math.round(Math.min(100, (cur / Number(tgt)) * 100)) : x.progress;
+                return { ...x, measureTarget: tgt, progress: pct, progressAt: todayISO() };
+              })} /></F>
+            </div>
+          </F>
           <F label="Objective" span><textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} /></F>
           <F label="Current position" span><textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} /></F>
           <F label="Held up?" span>
@@ -1378,6 +1482,12 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           <h2 className="h1" style={{ margin: 0 }}><Rag v={p.rag} />{p.name} <span className="mono">{p.code}</span></h2>
           <span className="chip">{p.stage}</span>{p.blocked && <span className="chip" style={{ color: "#FD0E33", borderColor: "#F3C2CB" }} title={[p.blockedBy && "Waiting on " + p.blockedBy, p.blocker].filter(Boolean).join(" — ")}>blocked</span>}
           <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>Health: {h.label}</span>
+          {isSupervised(data, p) && (() => {
+            const r = lastReport(data, p);
+            return <span className="chip sup" title="You supervise this — it is not yours to deliver">
+              {p.owner} · {r ? `last update ${r.days}d ago` : "no update yet"}
+            </span>;
+          })()}
           <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button className="btn sm" onClick={() => setEditing(p)}>Edit project</button>
             {!isWorkstream(data, p) && <button className="btn sm" onClick={() => setEditing({ ...emptyProject(data.settings), parentId: p.id })}>+ Workstream</button>}
@@ -1398,7 +1508,21 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
               <span><span className="flab">Next milestone</span>{p.nextMilestone ? p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")" : "—"}</span>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-              <div className="prog" style={{ flex: 1 }}><div style={{ width: p.progress + "%" }} /></div><span className="mono">{p.progress}%</span>
+              {/* A programme with workstreams and no measure of its own has no
+                  honest percentage. Averaging its strands would invent one —
+                  the exact thing that makes a progress bar worth ignoring. It
+                  reports how its workstreams are doing instead. */}
+              {kids.length > 0 && !p.measureTarget && !p.progress ? (
+                <span style={{ fontSize: 12.5 }}>
+                  <b>{kids.length}</b> workstream{kids.length > 1 ? "s" : ""}
+                  {h.needyChildren ? <> · <b style={{ color: "#FD0E33" }}>{h.needyChildren}</b> needing attention</> : " · all healthy"}
+                </span>
+              ) : (<>
+                <div className="prog" style={{ flex: 1 }}><div style={{ width: p.progress + "%" }} /></div>
+                <span className="mono">{p.progress}%</span>
+                {p.measureTarget ? <span className="chip">{p.measureCurrent}/{p.measureTarget} {p.measureLabel}</span> : null}
+                {p.progressBasis ? <span className="chip" title={"Reported " + fmtD(p.progressAt)}>per {p.progressBasis}{p.progressAt && daysSince(p.progressAt) > 30 ? ` · ${daysSince(p.progressAt)}d old` : ""}</span> : null}
+              </>)}
             </div>
           </div>
           <div className="card">
@@ -1455,7 +1579,9 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         {updates.map((u) => <div key={u.id} className="checkline"><span className="mono" style={{ width: 74 }}>{fmtD(u.date)}</span><Rag v={u.rag} /><span style={{ flex: 1 }}>{u.summary}</span>{u.flags.board && <span className="chip">board</span>}{u.flags.coo && <span className="chip">coo</span>}{u.flags.news && <span className="chip">news</span>}</div>)}
         {!updates.length && <div className="sub">No updates yet.</div>}
         <div className="h2">Work items ({allItems.length}{subIds.size ? ` — ${items.length} here, ${allItems.length - items.length} in workstreams` : ""})</div>
-        <ItemsTable data={data} rows={allItems} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
+        <QuickAdd data={data} mutate={mutate} people preset={{ project: p.id, contexts: [...(p.contexts || [])] }}
+          placeholder={`Add a task to ${p.name} — type it and press Enter`} />
+        <ItemsTable data={data} rows={allItems} onOpen={openItem} mutate={mutate} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
         {lessons.length > 0 && <><div className="h2">Lessons learned</div>{lessons.map((l) => <div key={l.id} className="checkline"><span style={{ flex: 1 }}>{l.title}</span><span className="chip">{l.status}</span></div>)}</>}
         {editing && <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />}
       </div>
@@ -1639,7 +1765,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail, bac
           {!(m.hypercare || []).length && <div className="empty">No hypercare entries. Log incidents, fixes and client feedback here during the stabilisation period.</div>}
         </>}
 
-        {tab === "items" && <ItemsTable data={data} rows={items} onOpen={openItem} />}
+        {tab === "items" && <ItemsTable data={data} rows={items} onOpen={openItem} mutate={mutate} />}
         {editing && <MobModal data={data} mob={editing} onSave={saveMob} onClose={() => setEditing(null)} onDelete={delMob} />}
       </div>
     );
@@ -3417,7 +3543,7 @@ export default function App({ auth }) {
         newProject={() => { setStartNew("project"); setProjDetail(null); setNav("projects"); }}
         newMob={() => { setStartNew("mob"); setMobDetail(null); setNav("mobs"); }} />;
       case "contexts": return <Contexts data={data} mutate={mutate} openItem={openItem} openProject={openProject} openMob={openMob} />;
-      case "people": return <People data={data} mutate={mutate} openItem={openItem} go={go} />;
+      case "people": return <People data={data} mutate={mutate} openItem={openItem} openProject={openProject} go={go} />;
       case "meetings": return <Meetings data={data} mutate={mutate} openItem={openItem} />;
       case "okrs": return <Okrs data={data} mutate={mutate} openProject={openProject} />;
       case "board": case "coo": return <ReportWorkspace data={data} mutate={mutate} />;

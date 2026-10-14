@@ -10,7 +10,7 @@ const SHOT = "/tmp/claude-0/-home-user-CMAC-dashboard/4a65e022-3d2e-5115-9f4c-7a
 const soft = async (n, fn) => {
   try { const r = await fn(); ok(n, r !== false, typeof r === "string" ? r : ""); }
   catch (e) {
-    ok(n, false, String(e.message || e).split("\n")[0].slice(0, 150));
+    ok(n, false, String(e.message || e).replace(/\u001b\[\d+m/g, "").split("\n").filter((l) => l.trim()).slice(0, 8).join(" ⏎ ").slice(0, 600));
     try {
       const slug = n.replace(/[^a-z0-9]+/gi, "-").slice(0, 40);
       await page.screenshot({ path: SHOT + "fail-" + slug + ".png" });
@@ -259,6 +259,46 @@ await soft("Portfolio spans projects and mobilisations in one list", async () =>
   return true;
 });
 
+/* ---------- ticking things off ---------- */
+await soft("A task can be added from the board without a modal", async () => {
+  await go("Action Board");
+  const col = page.locator('.kcol:has(h4:text-matches("^Not started"))').first();
+  const before = await col.locator(".kcard").count();
+  await col.locator('.quickadd input').fill("Typed straight onto the board");
+  await col.locator('.quickadd input').press("Enter");
+  await page.waitForTimeout(900);
+  if (await page.locator(".modal").count()) throw new Error("a modal opened");
+  if (await col.locator(".kcard").count() !== before + 1) throw new Error("not added");
+  return true;
+});
+
+await soft("One tick completes it, with no modal", async () => {
+  const card = page.locator('.kcard:has-text("Typed straight onto the board")').first();
+  const before = await page.locator(".kcol:not(.done) .kcard").count();
+  // The board sits in nested scroll containers (page y, lane x), which
+  // Playwright's own scroll-into-view will not settle on. Put it in view
+  // first, then click it like a person would.
+  await card.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(200);
+  await card.locator(".tick").click();
+  await page.waitForTimeout(900);
+  if (await page.locator(".modal").count()) throw new Error("a modal opened — the tick should be the whole interaction");
+  const after = await page.locator(".kcol:not(.done) .kcard").count();
+  if (after !== before - 1) throw new Error(`board went ${before} -> ${after}`);
+  return before + " → " + after;
+});
+
+await soft("Un-ticking puts it back", async () => {
+  const done = page.locator('.kcol.done .kcard:has-text("Typed straight onto the board") .tick').first();
+  if (!(await done.count())) throw new Error("not in Done");
+  await done.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(200);
+  await done.click();
+  await page.waitForTimeout(900);
+  if (!(await page.locator('.kcol:not(.done) .kcard:has-text("Typed straight onto the board")').count())) throw new Error("it did not come back");
+  return true;
+});
+
 /* ---------- project hierarchy ---------- */
 await soft("A project can be given workstreams, each a project in its own right", async () => {
   await go("Portfolio");
@@ -281,6 +321,25 @@ await soft("A project can be given workstreams, each a project in its own right"
   const txt = await page.locator(".h2", { hasText: /^Workstreams/ }).innerText();
   if (!/\(2\)/.test(txt)) throw new Error("expected 2 workstreams, got: " + txt);
   return txt;
+});
+
+await soft("A task can be added straight onto a project", async () => {
+  await page.locator('.pfrow:has-text("Automate driver details")').first().click();
+  await page.waitForTimeout(700);
+  await page.locator('.quickadd input').first().fill("Agree the field list with Devs");
+  await page.locator('.quickadd input').first().press("Enter");
+  await page.waitForTimeout(800);
+  if (await page.locator(".modal").count()) throw new Error("a modal opened");
+  if (!(await page.locator('text=Agree the field list with Devs').count())) throw new Error("not added to the project");
+  // And it ticks off from the table.
+  await page.locator('.tbl .tick').first().click();
+  await page.waitForTimeout(700);
+  if (!(await page.locator(".donerow").count())) throw new Error("ticking in the table did not complete it");
+  await page.locator('.tbl .tick').first().click();
+  await page.waitForTimeout(500);
+  await page.locator(".crumb").first().click();
+  await page.waitForTimeout(600);
+  return true;
 });
 
 await soft("A sub-project opens with its own updates and work items", async () => {

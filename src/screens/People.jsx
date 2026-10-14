@@ -14,13 +14,13 @@
    code that builds those outputs, not by remembering.
    ============================================================ */
 import React, { useState, useMemo } from "react";
-import { F, Empty, Badge, askConfirm, askInfo, copyText, fmtD } from "../ui";
+import { F, Empty, Badge, Rag, askConfirm, askInfo, copyText, fmtD } from "../ui";
 import {
   RELATIONSHIPS, personLoad, ctxNames, uid, todayISO, daysSince, daysUntil,
-  isOverdue, prioRank,
+  isOverdue, prioRank, portfolioAttention, lastReport, childProjects,
 } from "../lib/model";
 
-export default function People({ data, mutate, openItem, go }) {
+export default function People({ data, mutate, openItem, openProject, go }) {
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
@@ -34,7 +34,7 @@ export default function People({ data, mutate, openItem, go }) {
   }, [data, q]);
 
   const person = sel ? data.people.find((p) => p.id === sel) : null;
-  if (person) return <PersonPage data={data} person={person} mutate={mutate} openItem={openItem} back={() => setSel(null)} />;
+  if (person) return <PersonPage data={data} person={person} mutate={mutate} openItem={openItem} openProject={openProject} back={() => setSel(null)} />;
 
   const addPerson = (name) => {
     const n = String(name || "").trim();
@@ -104,9 +104,13 @@ function AddPerson({ onAdd, onCancel }) {
 /* ============================================================
    One person
    ============================================================ */
-function PersonPage({ data, person, mutate, openItem, back }) {
+function PersonPage({ data, person, mutate, openItem, openProject, back }) {
   const [tab, setTab] = useState("Work");
   const load = personLoad(data, person);
+  /* The work this person OWNS, as opposed to the items I have asked them
+     for. This is the half that was missing: without it a 1:1 covers the
+     chases and misses the thing they are actually accountable for. */
+  const owns = data.projects.filter((p) => String(p.owner || "").trim().toLowerCase() === person.name.toLowerCase());
   const edit = (fn, label) => mutate((d) => { const p = d.people.find((x) => x.id === person.id); if (p) fn(p); return d; }, label);
   const set = (k, v) => edit((p) => { p[k] = v; }, "Updated " + person.name);
 
@@ -168,6 +172,31 @@ function PersonPage({ data, person, mutate, openItem, back }) {
       </div>
 
       {tab === "Work" && <>
+        {owns.length > 0 && <>
+          <div className="h2">Projects they own ({owns.length})</div>
+          <p className="sub">Theirs to deliver, yours to supervise. Progress is whatever was last reported, not a figure you maintain.</p>
+          {owns.map((p) => {
+            const h = portfolioAttention(data, p, "project", data.settings);
+            const r = lastReport(data, p);
+            const kids = childProjects(data, p.id);
+            return (
+              <div key={p.id} className={"pfrow " + h.rag.toLowerCase()} onClick={() => openProject && openProject(p.id)}>
+                <div className="pfmain">
+                  <div className="pftop">
+                    <Rag v={h.rag} />
+                    <span className="pfname">{p.name}</span>
+                    <span className="chip">{p.stage}</span>
+                    {kids.length > 0 && <span className="chip sub">{kids.length} workstream{kids.length > 1 ? "s" : ""}</span>}
+                  </div>
+                  <div className="pfwhy">{h.reasons.length ? h.reasons.join(" · ") : (p.position || "Nothing outstanding")}</div>
+                </div>
+                <div className="pfnums">
+                  <div className={r && r.days > 21 ? "bad" : ""}><b>{r ? r.days + "d" : "—"}</b><i>since update</i></div>
+                  <div><b>{p.progress}%</b><i>{p.measureLabel ? `${p.measureCurrent}/${p.measureTarget}` : "progress"}</i></div>
+                </div>
+              </div>);
+          })}
+        </>}
         <Section title="I am waiting on them for" items={load.waitingOnThem} empty="Nothing outstanding with this person." />
         <Section title="What I owe them" items={load.iOweThem} empty="No commitments recorded to this person. Record one by creating a Commitment and setting 'Made to'." />
         <Section title="Their own open work" items={load.theyOwn} empty="Nothing is currently owned by this person." />
