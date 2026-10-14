@@ -2944,7 +2944,41 @@ function Assistant({ data, mutate, auth, onClose }) {
         due: { type: "string" }, owner: { type: "string" }, waitingOn: { type: "string" },
         nextAction: { type: "string" }, nextChase: { type: "string" }, lastChased: { type: "string" },
         blocker: { type: "string" }, outcome: { type: "string" },
+        project: { type: "string", description: "exact project or workstream name to file it under, or \"\" to unfile it" },
         note: { type: "string" },
+      }, required: ["title"] },
+    },
+    {
+      name: "create_project",
+      description: "Create a project, or a workstream inside an existing project. Use this when the user describes a piece of work with its own lifecycle — scoping, delivery, rollout — rather than a single task. A workstream is just a project with a parent.",
+      input_schema: { type: "object", properties: {
+        name: { type: "string" },
+        parent: { type: "string", description: "exact name of the project this sits inside, for a workstream. Omit for a project in its own right. Structure is two levels only — a workstream cannot have workstreams." },
+        objective: { type: "string" }, owner: { type: "string", description: "leave blank if it is the user's own" },
+        stage: { type: "string", enum: PROJECT_STAGES }, target: { type: "string", description: "YYYY-MM-DD" },
+        contexts: { type: "array", items: { type: "string" }, description: "exact context names: " + data.contexts.filter((c) => c.active).map((c) => c.name).join(", ") },
+      }, required: ["name"] },
+    },
+    {
+      name: "update_project",
+      description: "Change an existing project or workstream, found by its exact name. Only include the fields to change. Use `parent` to move a project under an umbrella, or \"\" to pull it back out to the top level.",
+      input_schema: { type: "object", properties: {
+        name: { type: "string", description: "exact existing name" },
+        stage: { type: "string", enum: PROJECT_STAGES }, owner: { type: "string" }, objective: { type: "string" },
+        position: { type: "string", description: "where it stands today, in plain prose" },
+        target: { type: "string" }, parent: { type: "string" },
+        progress: { type: "number", description: "0-100" },
+        progressBasis: { type: "string", description: "whose figure this is, e.g. 'Claire, 1:1'" },
+        blocked: { type: "boolean" }, blocker: { type: "string" },
+      }, required: ["name"] },
+    },
+    {
+      name: "convert_item_to_project",
+      description: "Turn an existing work item into a project or workstream, keeping its title, description and context. Use this when the user says something logged as a task is really a bigger piece of work. The original item is removed — it becomes the project.",
+      input_schema: { type: "object", properties: {
+        title: { type: "string", description: "exact title of the existing work item" },
+        parent: { type: "string", description: "exact name of the project it should sit inside, if any" },
+        owner: { type: "string" }, stage: { type: "string", enum: PROJECT_STAGES },
       }, required: ["title"] },
     },
     {
@@ -2990,6 +3024,15 @@ function Assistant({ data, mutate, auth, onClose }) {
         ["due", "owner", "waitingOn", "nextAction", "nextChase", "lastChased", "blocker", "outcome"].forEach((k) => {
           if (a[k] !== undefined && a[k] !== "" && w[k] !== a[k]) { w[k] = a[k]; changed.push(k + " → " + a[k]); }
         });
+        if (a.project !== undefined) {
+          if (a.project === "") { if (w.project) { w.project = ""; changed.push("unfiled"); } }
+          else {
+            const p = d.projects.find((x) => x.name.toLowerCase() === String(a.project).trim().toLowerCase()) ||
+                      d.projects.find((x) => x.name.toLowerCase().includes(String(a.project).trim().toLowerCase()));
+            if (p && w.project !== p.id) { w.project = p.id; changed.push(`filed under "${p.name}"`); }
+            else if (!p) changed.push(`(no project called "${a.project}" — left where it was)`);
+          }
+        }
         if (a.note) { w.notes = [...(w.notes || []), { ts: todayISO(), text: a.note }]; changed.push("note added"); }
         if (w.status === "Done" && !w.completed) w.completed = todayISO();
         w.updatedAt = todayISO();
@@ -2998,6 +3041,87 @@ function Assistant({ data, mutate, auth, onClose }) {
       }, "Assistant updated: " + a.title);
       return result;
     }
+    /* Projects. Every one of these reports back what it actually did, in
+       the words the user would use, because that string is what the model
+       reads next — and what it tells the user happened. */
+    const findProject = (d, name) => {
+      const n = String(name || "").trim().toLowerCase();
+      if (!n) return null;
+      return d.projects.find((x) => x.name.toLowerCase() === n) || d.projects.find((x) => x.name.toLowerCase().includes(n)) || null;
+    };
+    const ctxIds = (d, names) => (names || []).map((nm) => (d.contexts.find((c) => c.name.toLowerCase() === String(nm).toLowerCase()) || {}).id).filter(Boolean);
+
+    if (tu.name === "create_project") {
+      if (!a.name) return "Error: a name is required.";
+      let result = "";
+      mutate((d) => {
+        if (d.projects.some((x) => x.name.toLowerCase() === a.name.trim().toLowerCase())) { result = `A project called "${a.name}" already exists.`; return d; }
+        const parent = a.parent ? findProject(d, a.parent) : null;
+        if (a.parent && !parent) { result = `Error: no project called "${a.parent}" to put it inside.`; return d; }
+        if (parent && parent.parentId) { result = `Error: "${parent.name}" is itself a workstream, and the structure is two levels only. Put it under "${(d.projects.find((x) => x.id === parent.parentId) || {}).name}" instead.`; return d; }
+        const p = { ...emptyProject(d.settings), name: a.name.trim(), objective: a.objective || "", owner: a.owner || "",
+          stage: PROJECT_STAGES.includes(a.stage) ? a.stage : "Scoping", target: a.target || "",
+          parentId: parent ? parent.id : "", contexts: a.contexts ? ctxIds(d, a.contexts) : [...(parent?.contexts || [])] };
+        d.projects.push(p);
+        result = parent ? `Created "${p.name}" as a workstream inside "${parent.name}".` : `Created project "${p.name}".`;
+        return d;
+      }, "Assistant created project: " + a.name);
+      return result;
+    }
+
+    if (tu.name === "update_project") {
+      let result = `Error: no project called "${a.name || ""}" found.`;
+      mutate((d) => {
+        const p = findProject(d, a.name);
+        if (!p) return d;
+        const changed = [];
+        if (a.stage && PROJECT_STAGES.includes(a.stage) && p.stage !== a.stage) { p.stage = a.stage; changed.push("stage → " + a.stage); }
+        ["owner", "objective", "position", "target", "progressBasis"].forEach((k) => {
+          if (a[k] !== undefined && a[k] !== "" && p[k] !== a[k]) { p[k] = a[k]; changed.push(k + " updated"); }
+        });
+        if (typeof a.progress === "number") { p.progress = clamp(Math.round(a.progress), 0, 100); p.progressAt = todayISO(); changed.push("progress → " + p.progress + "%"); }
+        if (typeof a.blocked === "boolean" && p.blocked !== a.blocked) { p.blocked = a.blocked; changed.push(a.blocked ? "marked blocked" : "unblocked"); }
+        if (a.blocker !== undefined && a.blocker !== "") { p.blocker = a.blocker; changed.push("blocker recorded"); }
+        if (a.parent !== undefined) {
+          if (a.parent === "") { if (p.parentId) { p.parentId = ""; changed.push("moved to the top level"); } }
+          else {
+            const parent = findProject(d, a.parent);
+            if (!parent) { result = `Error: no project called "${a.parent}" to move it under.`; return d; }
+            if (!canParent(d, p.id, parent.id)) { result = `Error: "${p.name}" cannot sit under "${parent.name}" — the structure is two levels only, and a project with workstreams of its own stays at the top.`; return d; }
+            p.parentId = parent.id; changed.push(`moved under "${parent.name}"`);
+          }
+        }
+        p.updatedAt = todayISO();
+        result = changed.length ? `Updated "${p.name}": ${changed.join(", ")}.` : `No changes applied to "${p.name}".`;
+        return d;
+      }, "Assistant updated project: " + a.name);
+      return result;
+    }
+
+    if (tu.name === "convert_item_to_project") {
+      let result = `Error: no work item titled "${a.title || ""}" found.`;
+      mutate((d) => {
+        const n = String(a.title || "").trim().toLowerCase();
+        const w = d.workItems.find((x) => x.title.toLowerCase() === n) || d.workItems.find((x) => x.title.toLowerCase().includes(n));
+        if (!w) return d;
+        const parent = a.parent ? findProject(d, a.parent) : (w.project ? d.projects.find((x) => x.id === w.project) : null);
+        if (a.parent && !parent) { result = `Error: no project called "${a.parent}" to put it inside.`; return d; }
+        if (parent && parent.parentId) { result = `Error: "${parent.name}" is itself a workstream, and the structure is two levels only.`; return d; }
+        const p = { ...emptyProject(d.settings), name: w.title, objective: w.description || "",
+          owner: w.owner && w.owner !== meName(d) ? w.owner : "", stage: PROJECT_STAGES.includes(a.stage) ? a.stage : "Scoping",
+          target: w.due || "", parentId: parent ? parent.id : "", contexts: [...(w.contexts || [])] };
+        d.projects.push(p);
+        /* The item becomes the project rather than sitting beside it as a
+           duplicate — which is what went wrong before this tool existed. */
+        d.workItems = d.workItems.filter((x) => x.id !== w.id);
+        result = parent
+          ? `"${w.title}" is now a workstream inside "${parent.name}". The work item has been replaced by it.`
+          : `"${w.title}" is now a project in its own right. The work item has been replaced by it.`;
+        return d;
+      }, "Assistant converted to project: " + a.title);
+      return result;
+    }
+
     if (tu.name === "remember_context") {
       const note = String(a.note || "").trim();
       if (!note) return "Error: a note is required.";
@@ -3019,6 +3143,9 @@ HOW THE DATA IS SHAPED — read this before answering about people or work:
 - "people" lists names, roles and how much each is holding. It deliberately contains NO performance, development or PDR material: that is confidential and is not available to you. If asked about someone's performance or development, say plainly that the system does not expose it to you — do not infer it from their overdue count.
 - Goal health is calculated from progress against the deadline, not from the percentage alone, so a goal can be most of the way there and still off track.
 - Project and mobilisation RAG is calculated from overdue work, blockers, how long since anything moved and how close the target is.
+- A PROJECT is a piece of work with its own lifecycle, owner, dates and updates. A WORKSTREAM is simply a project with a parent. The structure is two levels and no deeper. A WORK ITEM is a single task, filed under a project or standing alone. If the user says something logged as a task is really a bigger piece of work, use convert_item_to_project — do not create a second record beside it.
+
+WHEN YOU CANNOT DO SOMETHING, SAY SO. Never substitute a different action for the one asked for: creating a task because you have no tool for a project leaves the user with a duplicate and a job still undone. If the right tool does not exist, answer in one sentence saying what you cannot change and where they can do it themselves. Always end your turn with a sentence to the user — a reply that is only tool calls tells them nothing about what happened or whether it worked.
 WORKSPACE:
 ${serialiseForAI(data)}`;
 
@@ -3097,11 +3224,19 @@ ${serialiseForAI(data)}`;
     setBusy(false);
   };
 
-  const describeTool = (tu) => tu.name === "create_work_item"
-    ? "Create item: " + (tu.input?.title || "…") + (tu.input?.due ? " (due " + fmtD(tu.input.due) + ")" : "")
-    : tu.name === "remember_context"
-    ? "Remember: " + (tu.input?.note || "…")
-    : "Update \"" + (tu.input?.title || "…") + "\" — " + Object.keys(tu.input || {}).filter((k) => k !== "title").join(", ");
+  const describeTool = (tu) => {
+    const a = tu.input || {};
+    const fields = (skip) => Object.keys(a).filter((k) => !skip.includes(k) && a[k] !== "" && a[k] !== undefined).join(", ");
+    switch (tu.name) {
+      case "create_work_item": return "Create task: " + (a.title || "untitled") + (a.due ? " (due " + fmtD(a.due) + ")" : "");
+      case "update_work_item": return a.title ? `Update task "${a.title}"` + (fields(["title"]) ? " — " + fields(["title"]) : "") : "Update a task (no title given)";
+      case "create_project": return a.parent ? `Create workstream "${a.name || "untitled"}" inside ${a.parent}` : `Create project "${a.name || "untitled"}"`;
+      case "update_project": return a.name ? `Update project "${a.name}"` + (fields(["name"]) ? " — " + fields(["name"]) : "") : "Update a project (no name given)";
+      case "convert_item_to_project": return `Turn "${a.title || "an item"}" into ${a.parent ? `a workstream inside ${a.parent}` : "a project"}`;
+      case "remember_context": return "Remember: " + (a.note || "…");
+      default: return tu.name + ": " + fields([]);
+    }
+  };
 
   const renderMsg = (m, i) => {
     if (m.role === "user") {

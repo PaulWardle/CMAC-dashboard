@@ -7,6 +7,18 @@
 import { supabase } from "./supabase";
 import { QUALITY, DEFAULT_QUALITY, modelFor, recordUsage } from "./ai";
 
+/* An API error arrives as {type, message}, not as a string. Handing that
+   object to new Error() stringifies it to "[object Object]" — which tells
+   the user nothing at the exact moment they most need to know what went
+   wrong. */
+function errText(e) {
+  if (!e) return "";
+  if (typeof e === "string") return e;
+  if (typeof e.message === "string") return e.message;
+  if (e.error) return errText(e.error);
+  try { return JSON.stringify(e).slice(0, 300); } catch (x) { return "Unknown error"; }
+}
+
 /* ---------- AI helper (via the /api/ai server proxy) ---------- */
 /* Forgiving JSON extraction for model output: strips fences and prose,
    fixes trailing commas and stray control characters, and — if the reply was
@@ -89,11 +101,11 @@ export async function askClaude(prompt, expectJson = false, maxTokens = 1000, jo
     });
     if (!res.ok) {
       let detail = "";
-      try { detail = (await res.json()).error || ""; } catch (e) {}
+      try { detail = errText((await res.json()).error); } catch (e) {}
       throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
     }
     const d = await res.json();
-    if (d.error) throw new Error(typeof d.error === "string" ? d.error : (d.error.message || "AI error"));
+    if (d.error) throw new Error(errText(d.error) || "AI error");
     recordUsage(d.model || model, d.usage);
     return d;
   };
@@ -124,7 +136,7 @@ export async function streamClaude({ system, messages, tools, maxTokens = 1600, 
   });
   if (!res.ok || !res.body) {
     let detail = "";
-    try { detail = (await res.json()).error || ""; } catch (e) {}
+    try { detail = errText((await res.json()).error); } catch (e) {}
     throw new Error(detail || ("AI service unavailable (" + res.status + ")"));
   }
   const reader = res.body.getReader();
@@ -168,7 +180,7 @@ export async function streamClaude({ system, messages, tools, maxTokens = 1600, 
         stop = ev.delta?.stop_reason || stop;
         if (ev.usage?.output_tokens != null) usage.output_tokens = ev.usage.output_tokens;
       } else if (ev.type === "error") {
-        throw new Error(ev.error?.message || "AI stream error");
+        throw new Error(errText(ev.error) || "AI stream error");
       }
     }
   }
