@@ -312,7 +312,7 @@ await soft("A project can be given workstreams, each a project in its own right"
     await page.locator('button:text-is("+ Workstream")').click();
     await page.waitForSelector(".modal", { timeout: 8000 });
     await page.locator(".modal input.input").first().fill(name);
-    await page.locator('.modal button:text-is("Create project")').click();
+    await page.locator('.modal button:text-is("Create workstream")').click();
     await page.waitForTimeout(800);
     // Creating a sub-project lands on IT, so go back up via the breadcrumb.
     await page.locator(".crumb").first().click();
@@ -350,8 +350,8 @@ await soft("A sub-project opens with its own updates and work items", async () =
   for (const section of ["Add update", "Work items"]) {
     if (!(await page.locator(".h2", { hasText: new RegExp("^" + section) }).count())) throw new Error("no " + section + " section");
   }
-  await page.locator('input[placeholder*="What moved"]').fill("Scoped the flow with Devs");
-  await page.locator('button:text-is("Add")').first().click();
+  await page.locator('textarea[placeholder*="Dump it however"]').fill("Scoped the flow with Devs");
+  await page.locator('button:text-is("Add update")').first().click();
   await page.waitForTimeout(700);
   if (!(await page.locator("text=Scoped the flow with Devs").count())) throw new Error("the strand kept no update of its own");
   return true;
@@ -470,6 +470,52 @@ await soft("Nothing nags about meetings anywhere", async () => {
   const alerts = await page.locator(".alert-row").allInnerTexts();
   if (alerts.some((t) => /not yet turned into actions/.test(t))) throw new Error("the alert survives");
   return tabs.join(" · ");
+});
+
+/* ---------- the wand ---------- */
+await soft("The wand turns a mind-dump into an update without saving it first", async () => {
+  await go("Portfolio");
+  await page.locator('.pfrow:has-text("WhatsApp Integration")').first().click();
+  await page.waitForTimeout(700);
+  // No capture box on a project page any more — that lives in Capture and Clippy.
+  if (await page.locator('.h2', { hasText: /Capture into this/ }).count()) throw new Error("the capture panel is still on the project page");
+
+  const tidy = "WhatsApp integration is done. Rollout to passengers caused a big jump in chats including ones we cannot help with, and the team are unhappy. Need a working group with Business Change and the developers.";
+  const wandRoute = async (route) => route.fulfill({ status: 200, headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usage: { input_tokens: 800, output_tokens: 90 }, content: [{ type: "text", text: tidy }] }) });
+  await page.route("**/api/ai", wandRoute);
+
+  const box = page.locator('.card textarea').first();
+  await box.fill("whatsapp done, rollout to pax, loads more chats, some we cant help, team fed up, want working group w BC and devs");
+  await page.locator('.wand').last().click();
+  await page.waitForTimeout(1500);
+  if (!(await page.locator(".wandout").count())) throw new Error("no suggestion returned");
+  // The typed words are still the user's until they choose.
+  const stillMine = await box.inputValue();
+  if (!/cant help/.test(stillMine)) throw new Error("it overwrote what was typed before being asked");
+  await page.locator('.wandout button:text-is("Use this")').click();
+  await page.waitForTimeout(500);
+  if (!/working group with Business Change/.test(await box.inputValue())) throw new Error("Use this did not apply the rewrite");
+  await page.unroute("**/api/ai", wandRoute);
+  return "tidied on request, not before";
+});
+
+await soft("A programme reports its workstreams rather than a made-up percentage", async () => {
+  const txt = await page.locator(".card").first().innerText();
+  if (/\d+%/.test(txt)) throw new Error("a percentage is being claimed for a programme: " + txt.slice(0, 160));
+  if (!/workstream/i.test(txt)) throw new Error("no workstream spread shown: " + txt.slice(0, 160));
+  return txt.split("\n").find((l) => /workstream/i.test(l)) || "";
+});
+
+await soft("Adding a workstream says 'workstream', not 'project'", async () => {
+  await page.locator('button:text-is("+ Workstream")').click();
+  await page.waitForTimeout(600);
+  const h = await page.locator(".modal .h1").first().innerText();
+  if (!/workstream/i.test(h)) throw new Error("the modal is headed: " + h);
+  if (!(await page.locator('.modal button:text-is("Create workstream")').count())) throw new Error("the save button still says project");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  return h;
 });
 
 /* ---------- the assistant can restructure work ---------- */

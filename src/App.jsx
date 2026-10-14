@@ -7,7 +7,7 @@ import { MONTHS, ytd, ytdTarget, lastIdx, ragFor, ragYtd, fmtVal } from "./lib/b
 import { QUALITY, DEFAULT_QUALITY, MODELS, modelFor, recordUsage, readMeter, meterTotals, resetMeter, costOf, fmtUsd } from "./lib/ai";
 import { askClaude, streamClaude, parseJsonLoose, setAiQuality } from "./lib/claude";
 import Capture, { blankItem } from "./screens/Capture";
-import ProjectPanel from "./screens/ProjectPanel";
+import Wand from "./screens/Wand";
 import Portfolio from "./screens/Portfolio";
 import People from "./screens/People";
 import Contexts from "./screens/Contexts";
@@ -22,7 +22,7 @@ import {
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
   childProjects, parentProject, isTopLevel, isWorkstream, canParent, projectTree, descendantIds,
-  isSupervised, lastReport, inboxItems, waitingItems,
+  isSupervised, lastReport, inboxItems, waitingItems, workstreamSpread,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -248,6 +248,12 @@ const STYLES = `
 .pfnums .bad b { color:#FD0E33; }
 .pfnums i { font-style:normal; font-size:8.5px; text-transform:uppercase; letter-spacing:.9px; color:#78828F; font-weight:800; }
 .chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
+.wand { display:inline-flex; align-items:center; gap:5px; background:#F3EFFA; border:1.5px solid #DCD2EF; color:#5B3FA0; border-radius:999px; padding:4px 12px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; }
+.wand:hover:not(:disabled) { background:#E9E1F7; border-color:#C4B2E6; }
+.wand:disabled { opacity:.45; cursor:default; }
+.wand.sm { padding:2px 10px; font-size:11px; }
+.wandout { background:#FAF8FD; border:1px solid #E4DBF3; border-radius:10px; padding:10px 12px; margin-top:8px; }
+.wandout .flab { color:#5B3FA0; }
 .quickadd { display:flex; gap:6px; margin:8px 0; }
 .quickadd .input { flex:1; }
 .quickadd .select { width:auto; min-width:110px; }
@@ -442,11 +448,20 @@ function QuickAdd({ data, mutate, preset, placeholder, people }) {
     <div className="quickadd">
       <input className="input" value={t} placeholder={placeholder || "Add a task — type it and press Enter"}
         onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
-      {people && (
-        <select className="select" value={who} onChange={(e) => setWho(e.target.value)} title="Whose is it?">
-          <option value="">Mine</option>
-          {data.people.map((x) => <option key={x.id} value={x.name}>Waiting on {x.name}</option>)}
-        </select>)}
+      {people && <>
+        <input className="input" style={{ width: 170 }} list="quickadd-who" value={who} placeholder="Mine — or whose?"
+          onChange={(e) => setWho(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+        {/* Everyone the workspace has ever named: People, plus any owner or
+            waiting-on already in use, so departments and one-off names come
+            up as readily as direct reports. */}
+        <datalist id="quickadd-who">
+          {[...new Set([
+            ...data.people.map((x) => x.name),
+            ...data.workItems.flatMap((w) => [w.owner, w.waitingOn]),
+            ...data.projects.map((x) => x.owner),
+          ].map((x) => String(x || "").trim()).filter(Boolean))].sort().map((n) => <option key={n} value={n} />)}
+        </datalist>
+      </>}
       <button className="btn sm" onClick={add} disabled={!t.trim()}>Add</button>
     </div>
   );
@@ -1318,12 +1333,13 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
   const [p, setP] = useState({ ...emptyProject(data.settings), ...JSON.parse(JSON.stringify(proj || {})) });
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   const isNew = !proj?.name;
+  const noun = p.parentId ? "workstream" : "project";
   return (
     <div className="modal-bg" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal">
-        <h3 className="h1">{isNew ? "New project" : "Edit project"}</h3>
+        <h3 className="h1">{isNew ? "New " + noun : "Edit " + noun}</h3>
         <div className="frow" style={{ marginTop: 10 }}>
-          <F label="Project name" span><input className="input" autoFocus value={p.name} onChange={(e) => set("name", e.target.value)} /></F>
+          <F label={(p.parentId ? "Workstream" : "Project") + " name"} span><input className="input" autoFocus value={p.name} onChange={(e) => set("name", e.target.value)} /></F>
           {childProjects(data, p.id).length === 0 && (
             <F label="Part of (leave blank for a project in its own right)" span>
               <select className="select" value={p.parentId || ""} onChange={(e) => set("parentId", e.target.value)}>
@@ -1360,32 +1376,32 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
           <F label="Start"><input type="date" className="input" value={p.start} onChange={(e) => set("start", e.target.value)} /></F>
           <F label="Target date"><input type="date" className="input" value={p.target} onChange={(e) => set("target", e.target.value)} /></F>
           <F label="Forecast completion"><input type="date" className="input" value={p.forecast} onChange={(e) => set("forecast", e.target.value)} /></F>
-          <F label={"Progress (" + p.progress + "%)"} span>
-            <input type="range" min="0" max="100" step="5" value={p.progress}
-              onChange={(e) => setP((x) => ({ ...x, progress: +e.target.value, progressAt: todayISO() }))} style={{ width: "100%" }} />
-            <div className="frow" style={{ marginTop: 6 }}>
-              <F label="Where the figure came from">
-                <input className="input" list="prog-basis" value={p.progressBasis || ""} onChange={(e) => set("progressBasis", e.target.value)} placeholder="e.g. Claire, 1:1" />
-                <datalist id="prog-basis"><option value="My estimate" />{data.people.map((x) => <option key={x.id} value={x.name} />)}</datalist>
-              </F>
-              <F label="As at"><input type="date" className="input" value={p.progressAt || ""} onChange={(e) => set("progressAt", e.target.value)} /></F>
-            </div>
-            <div className="frow" style={{ marginTop: 2 }}>
-              <F label="Or count it"><input className="input" value={p.measureLabel || ""} onChange={(e) => set("measureLabel", e.target.value)} placeholder="e.g. SOPs published" /></F>
+          <F label="Progress — counted, or left alone" span>
+            <div className="frow">
+              <F label="What you are counting"><input className="input" value={p.measureLabel || ""} onChange={(e) => set("measureLabel", e.target.value)} placeholder="e.g. SOPs published" /></F>
               <F label="Done"><input className="input" type="number" value={p.measureCurrent} onChange={(e) => setP((x) => {
                 const cur = e.target.value, tgt = Number(x.measureTarget);
-                const pct = Number(cur) >= 0 && tgt > 0 ? Math.round(Math.min(100, (Number(cur) / tgt) * 100)) : x.progress;
-                return { ...x, measureCurrent: cur, progress: pct, progressAt: todayISO() };
+                return { ...x, measureCurrent: cur, progress: tgt > 0 ? Math.round(Math.min(100, (Number(cur) / tgt) * 100)) : 0, progressAt: todayISO() };
               })} /></F>
               <F label="Of"><input className="input" type="number" value={p.measureTarget} onChange={(e) => setP((x) => {
                 const tgt = e.target.value, cur = Number(x.measureCurrent);
-                const pct = Number(tgt) > 0 && cur >= 0 ? Math.round(Math.min(100, (cur / Number(tgt)) * 100)) : x.progress;
-                return { ...x, measureTarget: tgt, progress: pct, progressAt: todayISO() };
+                return { ...x, measureTarget: tgt, progress: Number(tgt) > 0 ? Math.round(Math.min(100, (cur / Number(tgt)) * 100)) : 0, progressAt: todayISO() };
               })} /></F>
+              <F label="Whose figure"><input className="input" list="prog-basis" value={p.progressBasis || ""} onChange={(e) => set("progressBasis", e.target.value)} placeholder="e.g. Claire, 1:1" />
+                <datalist id="prog-basis"><option value="My estimate" />{data.people.map((x) => <option key={x.id} value={x.name} />)}</datalist></F>
+            </div>
+            <div className="sub" style={{ margin: "4px 0 0" }}>
+              {childProjects(data, p.id).length > 0
+                ? "This has workstreams, so its progress is theirs — the page reports how many are done, moving and stuck. A number here would only cover work filed directly against it."
+                : p.measureTarget
+                  ? `Reads as ${p.progress}% — ${p.measureCurrent || 0} of ${p.measureTarget}. Leave the count blank and no percentage is shown, which is better than one nobody can account for.`
+                  : "Leave this blank unless there is something real to count. The stage already says where the work has got to."}
             </div>
           </F>
-          <F label="Objective" span><textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} /></F>
-          <F label="Current position" span><textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} /></F>
+          <F label="Objective" span>
+            <div style={{ marginBottom: 4 }}><Wand data={data} project={p} kind="objective" text={p.objective} compact onUse={(t) => set("objective", t)} /></div><textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} /></F>
+          <F label="Current position" span>
+            <div style={{ marginBottom: 4 }}><Wand data={data} project={p} kind="position" text={p.position} compact onUse={(t) => set("position", t)} /></div><textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} /></F>
           <F label="Held up?" span>
             <label className="checkline" style={{ padding: 0 }}>
               <input type="checkbox" checked={!!p.blocked} onChange={(e) => set("blocked", e.target.checked)} />
@@ -1402,7 +1418,7 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
           {!isNew && <button className="btn danger" onClick={async () => { if (await askConfirm("Delete this project? Linked work items are kept but unlinked.")) onDelete(p.id); }}>Delete</button>}
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn pri" onClick={() => { if (!p.name.trim()) return askInfo("Project name is required."); onSave({ ...p, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create project" : "Save"}</button>
+          <button className="btn pri" onClick={() => { if (!p.name.trim()) return askInfo("A name is required."); onSave({ ...p, updatedAt: todayISO() }, isNew); }}>{isNew ? "Create " + noun : "Save"}</button>
         </div>
       </div>
     </div>
@@ -1435,6 +1451,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
     const updates = data.updates.filter((u) => u.project === p.id).sort((a, b) => b.date.localeCompare(a.date));
     const lessons = (data.lessons || []).filter((l) => l.project === p.id);
     const kids = childProjects(data, p.id);
+    const spread = workstreamSpread(data, p);
     /* Work filed against a strand belongs to the umbrella too, so a parent
        never reads as having nothing going on. */
     const subIds = descendantIds(data, p.id);
@@ -1492,7 +1509,12 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         <div className="grid" style={{ gridTemplateColumns: "2fr 1fr", marginTop: 12, alignItems: "start" }}>
           <div className="card">
             <div className="flab">Objective</div><div style={{ marginBottom: 8 }}>{p.objective || "—"}</div>
-            <div className="flab">Current position</div><div style={{ marginBottom: 8 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
+            <div className="flab">Current position</div>
+            <div style={{ marginBottom: 8 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
+            <div style={{ marginBottom: 10 }}>
+              <Wand data={data} project={p} kind="position" text={p.position} compact
+                onUse={(t) => mutate((d) => { const x = d.projects.find((y) => y.id === p.id); if (x) { x.position = t; x.updatedAt = todayISO(); } return d; }, "Position updated: " + p.name)} />
+            </div>
             <div style={{ display: "flex", gap: 16, fontSize: 12.5, flexWrap: "wrap" }}>
               <span><span className="flab">Owner</span>{p.owner || "—"}</span>
               <span><span className="flab">Sponsor</span>{p.sponsor || "—"}</span>
@@ -1502,21 +1524,21 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
               <span><span className="flab">Next milestone</span>{p.nextMilestone ? p.nextMilestone + " (" + fmtD(p.nextMilestoneDate) + ")" : "—"}</span>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-              {/* A programme with workstreams and no measure of its own has no
-                  honest percentage. Averaging its strands would invent one —
-                  the exact thing that makes a progress bar worth ignoring. It
-                  reports how its workstreams are doing instead. */}
-              {kids.length > 0 && !p.measureTarget && !p.progress ? (
+              {/* What a programme is doing is how its workstreams are
+                  spread, not an average of them. Every part of this is read
+                  off the workstreams; none of it is typed. */}
+              {spread ? (
                 <span style={{ fontSize: 12.5 }}>
-                  <b>{kids.length}</b> workstream{kids.length > 1 ? "s" : ""}
-                  {h.needyChildren ? <> · <b style={{ color: "#FD0E33" }}>{h.needyChildren}</b> needing attention</> : " · all healthy"}
+                  <b>{spread.total}</b> workstream{spread.total > 1 ? "s" : ""} — {spread.text}
                 </span>
-              ) : (<>
+              ) : p.measureTarget ? (<>
                 <div className="prog" style={{ flex: 1 }}><div style={{ width: p.progress + "%" }} /></div>
                 <span className="mono">{p.progress}%</span>
-                {p.measureTarget ? <span className="chip">{p.measureCurrent}/{p.measureTarget} {p.measureLabel}</span> : null}
+                <span className="chip">{p.measureCurrent || 0}/{p.measureTarget} {p.measureLabel}</span>
                 {p.progressBasis ? <span className="chip" title={"Reported " + fmtD(p.progressAt)}>per {p.progressBasis}{p.progressAt && daysSince(p.progressAt) > 30 ? ` · ${daysSince(p.progressAt)}d old` : ""}</span> : null}
-              </>)}
+              </>) : (
+                <span className="sub" style={{ margin: 0 }}>Stage: <b>{p.stage}</b> — nothing counted, so no percentage is claimed.</span>
+              )}
             </div>
           </div>
           <div className="card">
@@ -1553,7 +1575,12 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
                 <div className="pfnums">
                   <div><b>{cItems.length}</b><i>open</i></div>
                   <div className={ch.overdue ? "bad" : ""}><b>{ch.overdue}</b><i>overdue</i></div>
-                  <div><b>{c.progress}%</b><i>progress</i></div>
+                  {/* Only a counted figure earns a number here. "0%" against
+                      a workstream nobody is counting is the invented
+                      percentage, just in a smaller font. */}
+                  {c.measureTarget
+                    ? <div><b>{c.progress}%</b><i>{c.measureCurrent || 0}/{c.measureTarget}</i></div>
+                    : <div><b>{c.stage}</b><i>stage</i></div>}
                   <div><b>{left === null ? "—" : left < 0 ? `${Math.abs(left)}d late` : `${left}d`}</b><i>to target</i></div>
                 </div>
               </div>);
@@ -1563,12 +1590,15 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           <div className="sub" style={{ marginTop: 14 }}>
             Work with several distinct strands — each needing its own scoping, build and rollout — is better held as workstreams than as one long list of actions. Use <b>+ Workstream</b> above.
           </div>)}
-        <ProjectPanel data={data} project={p} mutate={mutate} setDetail={setDetail} />
         <div className="h2">Add update</div>
-        <div className="card"><div style={{ display: "flex", gap: 8 }}>
-          <input className="input" value={updText} onChange={(e) => setUpdText(e.target.value)} placeholder="What moved, what's the position now, what's next…" onKeyDown={(e) => e.key === "Enter" && addUpdate()} />
-          <button className="btn pri" onClick={addUpdate}>Add</button>
-        </div></div>
+        <div className="card">
+          <textarea className="ta" rows={2} value={updText} onChange={(e) => setUpdText(e.target.value)}
+            placeholder="Dump it however it comes out — the wand reads the project and tidies it into something you could send." />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="btn pri" onClick={addUpdate} disabled={!updText.trim()}>Add update</button>
+            <Wand data={data} project={p} kind="update" text={updText} onUse={setUpdText} />
+          </div>
+        </div>
         <div className="h2">Updates ({updates.length})</div>
         {updates.map((u) => <div key={u.id} className="checkline"><span className="mono" style={{ width: 74 }}>{fmtD(u.date)}</span><Rag v={u.rag} /><span style={{ flex: 1 }}>{u.summary}</span>{u.flags.board && <span className="chip">board</span>}{u.flags.coo && <span className="chip">coo</span>}{u.flags.news && <span className="chip">news</span>}</div>)}
         {!updates.length && <div className="sub">No updates yet.</div>}

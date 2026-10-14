@@ -118,7 +118,9 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
                 const r = lastReport(data, e);
                 return <>
                   <div className={r && r.days > 21 ? "bad" : ""}><b>{r ? r.days + "d" : "—"}</b><i>since update</i></div>
-                  <div><b>{e.progress}%</b><i>{e.progressBasis ? "per " + e.progressBasis.split(",")[0] : "progress"}</i></div>
+                  {e.measureTarget
+                    ? <div><b>{e.progress}%</b><i>{e.progressBasis ? "per " + e.progressBasis.split(",")[0] : `${e.measureCurrent || 0}/${e.measureTarget}`}</i></div>
+                    : <div><b>{e.stage}</b><i>stage</i></div>}
                 </>;
               })() : <>
                 <div><b>{h.open}</b><i>open</i></div>

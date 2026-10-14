@@ -354,6 +354,30 @@ export function portfolioAttention(d, entity, kind, settings = {}) {
   return { score: Math.round(score), rag, reasons, overdue: overdue.length, blocked: blockedItems.length, open: items.length, stale, children: kids.length, needyChildren: needy };
 }
 
+/* How a programme is actually doing: not one number, but how its
+   workstreams are spread. "2 done, 1 in rollout, 1 blocked, 1 not started"
+   says something a percentage never could — and every part of it is read
+   off the workstreams rather than typed by anyone. */
+export function workstreamSpread(d, p) {
+  const kids = childProjects(d, p.id);
+  if (!kids.length) return null;
+  const done = kids.filter((k) => k.stage === "Closed").length;
+  const cancelled = kids.filter((k) => k.stage === "Cancelled").length;
+  const held = kids.filter((k) => k.stage === "On Hold").length;
+  const blocked = kids.filter((k) => k.blocked && !["Closed", "Cancelled"].includes(k.stage)).length;
+  const notStarted = kids.filter((k) => k.stage === "Idea").length;
+  const moving = kids.length - done - cancelled - held - blocked - notStarted;
+  const parts = [
+    done && `${done} done`,
+    moving > 0 && `${moving} moving`,
+    blocked && `${blocked} blocked`,
+    held && `${held} on hold`,
+    notStarted && `${notStarted} not started`,
+    cancelled && `${cancelled} cancelled`,
+  ].filter(Boolean);
+  return { total: kids.length, done, moving, blocked, held, notStarted, cancelled, text: parts.join(" · ") };
+}
+
 /* An OKR is not healthy because it is 80% done. It is healthy when
    progress is ahead of the clock. */
 export function okrProgress(o) {

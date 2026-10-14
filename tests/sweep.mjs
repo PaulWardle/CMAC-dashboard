@@ -419,9 +419,9 @@ await soft("Creating lands straight on the new project, not a second list", asyn
   return true;
 });
 await soft("Project update posts", async () => {
-  const inp = page.locator('input[placeholder*="What moved"]');
+  const inp = page.locator('textarea[placeholder*="Dump it however"]');
   await inp.fill("Kick-off completed, resourcing agreed");
-  await page.locator('button:text-is("Add")').first().click();
+  await page.locator('button:text-is("Add update")').first().click();
   await page.waitForTimeout(500);
   if (!(await page.locator("text=Kick-off completed").count())) throw new Error("update not shown");
   return true;
