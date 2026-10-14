@@ -26,7 +26,7 @@ const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromi
 const page = await browser.newPage({ viewport: { width: 1500, height: 980 } });
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e.message).slice(0, 200)));
-page.on("console", (m) => { if (m.type() === "error" && !/favicon|manifest|sw\.js|ERR_CERT_AUTHORITY_INVALID|fonts\.googleapis/i.test(m.text())) errors.push("console: " + m.text().slice(0, 200)); });
+page.on("console", (m) => { if (m.type() === "error" && !/favicon|manifest|sw\.js|ERR_CERT_AUTHORITY_INVALID|fonts\.googleapis|status of 529/i.test(m.text())) errors.push("console: " + m.text().slice(0, 200)); });
 
 /* A capture read, shaped like the real thing. */
 const CAPTURE = {
@@ -470,6 +470,82 @@ await soft("Nothing nags about meetings anywhere", async () => {
   const alerts = await page.locator(".alert-row").allInnerTexts();
   if (alerts.some((t) => /not yet turned into actions/.test(t))) throw new Error("the alert survives");
   return tabs.join(" · ");
+});
+
+/* ---------- the assistant can restructure work ---------- */
+const sseOf = (evts) => evts.map((e) => "data: " + JSON.stringify(e) + "\n\n").join("");
+const toolCall = (name, input, say) => sseOf([
+  { type: "message_start", message: { usage: { input_tokens: 900, output_tokens: 0, cache_creation_input_tokens: 900, cache_read_input_tokens: 0 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_" + name, name, input: {} } },
+  { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 30 } },
+]);
+const sayOnly = (text) => sseOf([
+  { type: "message_start", message: { usage: { input_tokens: 900, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 900 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 20 } },
+]);
+
+await soft("The assistant turns a work item into a workstream and removes the item", async () => {
+  // A task that is really a strand of a bigger programme.
+  await go("Action Board");
+  const col = page.locator('.kcol:has(h4:text-matches("^Not started"))').first();
+  await col.locator('.quickadd input').fill("Automation driver details");
+  await col.locator('.quickadd input').press("Enter");
+  await page.waitForTimeout(900);
+
+  const script = [
+    toolCall("convert_item_to_project", { title: "Automation driver details", parent: "WhatsApp Integration" }, ""),
+    sayOnly("Done — it is now a workstream inside WhatsApp Integration, and the task has gone."),
+  ];
+  let i = 0;
+  const assistantRoute = async (route) => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    if (!body.stream) return route.fulfill({ status: 200, headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usage: {}, content: [{ type: "text", text: "{}" }] }) });
+    return route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: script[Math.min(i++, script.length - 1)] });
+  };
+  await page.route("**/api/ai", assistantRoute);
+
+  await page.locator(".clip-fab").click();
+  await page.waitForTimeout(600);
+  await page.locator('label:has-text("Apply changes without asking") input').check();
+  await page.locator('textarea, input[placeholder*="Ask, tell it"]').last().fill("the work item for automation driver details is actually a workstream within whatsapp project");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(2500);
+  await page.unroute("**/api/ai", assistantRoute);
+
+  const state = await page.evaluate(() => {
+    const d = JSON.parse(localStorage.getItem("cmac-occ-v1"));
+    const umb = d.projects.find((x) => x.name === "WhatsApp Integration");
+    const made = d.projects.find((x) => x.name === "Automation driver details");
+    return {
+      item: d.workItems.filter((w) => w.title === "Automation driver details").length,
+      project: !!made,
+      underUmbrella: !!(made && umb && made.parentId === umb.id),
+    };
+  });
+  if (!state.project) throw new Error("no project was created");
+  if (!state.underUmbrella) throw new Error("created, but not as a workstream of WhatsApp Integration");
+  if (state.item !== 0) throw new Error("the original work item is still there — a duplicate, which is the bug");
+  return "converted, item removed";
+});
+
+await soft("An API error shows its reason, not [object Object]", async () => {
+  const failRoute = async (route) => route.fulfill({ status: 529, headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ error: { type: "overloaded_error", message: "Overloaded" } }) });
+  await page.route("**/api/ai", failRoute);
+  await page.locator('textarea, input[placeholder*="Ask, tell it"]').last().fill("anything");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(2000);
+  await page.unroute("**/api/ai", failRoute);
+  const txt = await page.locator(".aview, .amsg, body").last().innerText();
+  if (/\[object Object\]/.test(txt)) throw new Error("still rendering [object Object]");
+  if (!/Overloaded/i.test(txt)) throw new Error("the reason is not shown: " + txt.slice(-200));
+  return "shows 'Overloaded'";
 });
 
 /* ---------- sidebar badges tell the truth ---------- */
