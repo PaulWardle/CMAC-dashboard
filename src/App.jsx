@@ -7,6 +7,7 @@ import { MONTHS, ytd, ytdTarget, lastIdx, ragFor, ragYtd, fmtVal } from "./lib/b
 import { QUALITY, DEFAULT_QUALITY, MODELS, modelFor, recordUsage, readMeter, meterTotals, resetMeter, costOf, fmtUsd } from "./lib/ai";
 import { askClaude, streamClaude, parseJsonLoose, setAiQuality } from "./lib/claude";
 import Capture, { blankItem } from "./screens/Capture";
+import ProjectPanel from "./screens/ProjectPanel";
 import Portfolio from "./screens/Portfolio";
 import People from "./screens/People";
 import Contexts from "./screens/Contexts";
@@ -20,7 +21,7 @@ import {
   STATUSES, OPEN_STATUSES, LEGACY_STATUS, MODES, PRIORITIES, PRIO_LABEL, PRIO_HINT, LEGACY_PRIORITY,
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
-  childProjects, parentProject, isTopLevel, canParent, projectTree, descendantIds,
+  childProjects, parentProject, isTopLevel, isWorkstream, canParent, projectTree, descendantIds,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -1251,12 +1252,17 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
         <h3 className="h1">{isNew ? "New project" : "Edit project"}</h3>
         <div className="frow" style={{ marginTop: 10 }}>
           <F label="Project name" span><input className="input" autoFocus value={p.name} onChange={(e) => set("name", e.target.value)} /></F>
-          <F label="Part of (leave blank for a top-level project)" span>
-            <select className="select" value={p.parentId || ""} onChange={(e) => set("parentId", e.target.value)}>
-              <option value="">— a project in its own right —</option>
-              {projectTree(data, (x) => x.id !== p.id && canParent(data, p.id, x.id))
-                .map(({ project: x, depth }) => <option key={x.id} value={x.id}>{"\u00a0\u00a0".repeat(depth) + (depth ? "└ " : "") + x.name}</option>)}
-            </select></F>
+          {childProjects(data, p.id).length === 0 && (
+            <F label="Part of (leave blank for a project in its own right)" span>
+              <select className="select" value={p.parentId || ""} onChange={(e) => set("parentId", e.target.value)}>
+                <option value="">— a project in its own right —</option>
+                {data.projects.filter((x) => x.id !== p.id && canParent(data, p.id, x.id)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+            </F>)}
+          {childProjects(data, p.id).length > 0 && (
+            <F label="Part of" span>
+              <div className="sub" style={{ margin: 0 }}>This project has {childProjects(data, p.id).length} workstream(s) of its own, so it stays top level. Structure goes two deep and no further.</div>
+            </F>)}
           <F label="Code"><input className="input" value={p.code} onChange={(e) => set("code", e.target.value)} /></F>
           <F label="Owner"><input className="input" value={p.owner} onChange={(e) => set("owner", e.target.value)} /></F>
           <F label="Sponsor"><input className="input" value={p.sponsor} onChange={(e) => set("sponsor", e.target.value)} /></F>
@@ -1349,7 +1355,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         `Owner: ${p.owner || "(missing)"} · Target: ${fmtD(p.target)} · Forecast: ${fmtD(p.forecast) || "(missing)"}`, ``,
         `## Objective`, p.objective || "(missing)", ``, `## Current position`, p.position || "(missing — flag: no current position recorded)", ``,
         `## Next milestone`, p.nextMilestone ? `${p.nextMilestone} — ${fmtD(p.nextMilestoneDate)}` : "(missing — flag: no next milestone)", ``,
-        ...(kids.length ? [`## Sub-projects (${kids.length})`,
+        ...(kids.length ? [`## Workstreams (${kids.length})`,
           ...kids.map((c) => {
             const ch = portfolioAttention(data, c, "project", data.settings);
             return `- **${c.name}** — ${c.stage}, ${ch.rag}, ${c.progress}%${c.owner ? ", " + c.owner : ""}${c.target ? ", target " + fmtD(c.target) : ""}` +
@@ -1374,7 +1380,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           <span className="chip" style={h.label !== "Healthy" ? { color: "#FD0E33", borderColor: "#F3C2CB" } : null}>Health: {h.label}</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button className="btn sm" onClick={() => setEditing(p)}>Edit project</button>
-            <button className="btn sm" onClick={() => setEditing({ ...emptyProject(data.settings), parentId: p.id })}>+ Sub-project</button>
+            {!isWorkstream(data, p) && <button className="btn sm" onClick={() => setEditing({ ...emptyProject(data.settings), parentId: p.id })}>+ Workstream</button>}
             <button className="btn sm" onClick={() => newItem({ project: p.id })}>+ Work item</button>
             <button className="btn sm pri" onClick={report}>Generate report</button>
           </span>
@@ -1408,8 +1414,8 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           </div>
         </div>
         {kids.length > 0 && <>
-          <div className="h2">Sub-projects ({kids.length})</div>
-          <p className="sub">Each one is a project in its own right — its own stage, owner, dates, updates and work items. Open one to work on it.</p>
+          <div className="h2">Workstreams ({kids.length})</div>
+          <p className="sub">Each one is a project in its own right — its own stage, owner, dates, updates, chasers and work items. Open one to work on it.</p>
           {kids.map((c) => {
             const ch = portfolioAttention(data, c, "project", data.settings);
             const cItems = data.workItems.filter((w) => w.project === c.id && isOpen(w));
@@ -1435,10 +1441,11 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
               </div>);
           })}
         </>}
-        {!kids.length && !p.parentId && (
+        {!kids.length && !isWorkstream(data, p) && (
           <div className="sub" style={{ marginTop: 14 }}>
-            Work with several distinct strands — each needing its own scoping, build and rollout — is better held as sub-projects than as a long list of actions. Use <b>+ Sub-project</b> above.
+            Work with several distinct strands — each needing its own scoping, build and rollout — is better held as workstreams than as one long list of actions. Use <b>+ Workstream</b> above.
           </div>)}
+        <ProjectPanel data={data} project={p} mutate={mutate} setDetail={setDetail} />
         <div className="h2">Add update</div>
         <div className="card"><div style={{ display: "flex", gap: 8 }}>
           <input className="input" value={updText} onChange={(e) => setUpdText(e.target.value)} placeholder="What moved, what's the position now, what's next…" onKeyDown={(e) => e.key === "Enter" && addUpdate()} />
@@ -1447,7 +1454,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
         <div className="h2">Updates ({updates.length})</div>
         {updates.map((u) => <div key={u.id} className="checkline"><span className="mono" style={{ width: 74 }}>{fmtD(u.date)}</span><Rag v={u.rag} /><span style={{ flex: 1 }}>{u.summary}</span>{u.flags.board && <span className="chip">board</span>}{u.flags.coo && <span className="chip">coo</span>}{u.flags.news && <span className="chip">news</span>}</div>)}
         {!updates.length && <div className="sub">No updates yet.</div>}
-        <div className="h2">Work items ({allItems.length}{subIds.size ? ` — ${items.length} here, ${allItems.length - items.length} in sub-projects` : ""})</div>
+        <div className="h2">Work items ({allItems.length}{subIds.size ? ` — ${items.length} here, ${allItems.length - items.length} in workstreams` : ""})</div>
         <ItemsTable data={data} rows={allItems} onOpen={openItem} cols={["title", "type", "status", "priority", "owner", "due", "updated"]} />
         {lessons.length > 0 && <><div className="h2">Lessons learned</div>{lessons.map((l) => <div key={l.id} className="checkline"><span style={{ flex: 1 }}>{l.title}</span><span className="chip">{l.status}</span></div>)}</>}
         {editing && <ProjectModal data={data} proj={editing} onSave={saveProj} onClose={() => setEditing(null)} onDelete={delProj} />}

@@ -260,16 +260,16 @@ await soft("Portfolio spans projects and mobilisations in one list", async () =>
 });
 
 /* ---------- project hierarchy ---------- */
-await soft("A project can be given sub-projects, each a project in its own right", async () => {
+await soft("A project can be given workstreams, each a project in its own right", async () => {
   await go("Portfolio");
   await page.locator('button:text-is("+ New project")').click();
   await page.waitForSelector(".modal", { timeout: 8000 });
   await page.locator(".modal input.input").first().fill("WhatsApp Integration");
   await page.locator('.modal button:text-is("Create project")').click();
   await page.waitForTimeout(800);
-  if (!(await page.locator('button:text-is("+ Sub-project")').count())) throw new Error("no + Sub-project button on the detail page");
+  if (!(await page.locator('button:text-is("+ Workstream")').count())) throw new Error("no + Workstream button on the detail page");
   for (const name of ["Automate driver details", "Large vehicle recruiting"]) {
-    await page.locator('button:text-is("+ Sub-project")').click();
+    await page.locator('button:text-is("+ Workstream")').click();
     await page.waitForSelector(".modal", { timeout: 8000 });
     await page.locator(".modal input.input").first().fill(name);
     await page.locator('.modal button:text-is("Create project")').click();
@@ -278,8 +278,8 @@ await soft("A project can be given sub-projects, each a project in its own right
     await page.locator(".crumb").first().click();
     await page.waitForTimeout(600);
   }
-  const txt = await page.locator(".h2", { hasText: /^Sub-projects/ }).innerText();
-  if (!/\(2\)/.test(txt)) throw new Error("expected 2 sub-projects, got: " + txt);
+  const txt = await page.locator(".h2", { hasText: /^Workstreams/ }).innerText();
+  if (!/\(2\)/.test(txt)) throw new Error("expected 2 workstreams, got: " + txt);
   return txt;
 });
 
@@ -313,17 +313,17 @@ await soft("Portfolio shows the umbrella, not each strand", async () => {
   if (await umbrella.count() !== 1) throw new Error("expected the umbrella once, got " + (await umbrella.count()));
   if (await page.locator('.pfrow:has-text("Automate driver details")').count()) throw new Error("a strand is listed separately at the top level");
   const chip = await umbrella.locator(".chip.sub").innerText().catch(() => "");
-  if (!/2 sub-project/.test(chip)) throw new Error("sub-project chip reads: " + JSON.stringify(chip));
+  if (!/2 workstream/.test(chip)) throw new Error("workstream chip reads: " + JSON.stringify(chip));
   return chip;
 });
 
 await soft("…and can be expanded to list them", async () => {
-  await page.locator('label:has-text("List sub-projects separately") input').check();
+  await page.locator('label:has-text("List workstreams separately") input').check();
   await page.waitForTimeout(500);
   const rows = await page.locator(".pfrow").allInnerTexts();
   if (!rows.some((r) => /Automate driver details/.test(r))) throw new Error("strands still hidden");
   if (!rows.some((r) => /under WhatsApp Integration/.test(r))) throw new Error("a strand does not say what it is under");
-  await page.locator('label:has-text("List sub-projects separately") input').uncheck();
+  await page.locator('label:has-text("List workstreams separately") input').uncheck();
   await page.waitForTimeout(400);
   return true;
 });
@@ -347,7 +347,7 @@ await soft("A work item can be filed against a strand, and rolls up to the umbre
   await page.locator('.modal button:text-is("Create work item")').click();
   await page.waitForTimeout(900);
   const hdr = await page.locator(".h2", { hasText: /^Work items/ }).innerText();
-  if (!/in sub-projects/i.test(hdr)) throw new Error("the umbrella does not account for strand work: " + hdr);
+  if (!/in workstreams/i.test(hdr)) throw new Error("the umbrella does not account for strand work: " + hdr);
   if (!(await page.locator("text=Build the driver details form").count())) throw new Error("item not shown on the umbrella");
   return hdr;
 });

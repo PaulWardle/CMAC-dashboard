@@ -236,12 +236,25 @@ export function descendantIds(d, id, seen = new Set()) {
   });
   return seen;
 }
-/* Whether `parentId` may become `child`'s parent: not itself, and not
-   something already underneath it. */
+/* Exactly two levels, deliberately. A project either stands alone or is an
+   umbrella with workstreams under it — and a workstream cannot have
+   workstreams of its own. Unlimited nesting is how a structure turns into a
+   filing system nobody can hold in their head, and the thing being modelled
+   here does not go deeper than that in real life. */
+export const MAX_PROJECT_DEPTH = 1;
+export const isWorkstream = (d, p) => !!p.parentId && d.projects.some((x) => x.id === p.parentId);
+
+/* Whether `parentId` may become `child`'s parent. Refused when it is the
+   project itself, something already underneath it, a project that is
+   already a workstream, or when the project being moved has workstreams of
+   its own — any of those would make a third level. */
 export function canParent(d, childId, parentId) {
   if (!parentId) return true;
   if (parentId === childId) return false;
-  return !descendantIds(d, childId).has(parentId);
+  if (descendantIds(d, childId).has(parentId)) return false;
+  const parent = d.projects.find((x) => x.id === parentId);
+  if (parent && isWorkstream(d, parent)) return false;
+  return childProjects(d, childId).length === 0;
 }
 /* Top-level projects first, each followed by its own subtree, so a list can
    be rendered in reading order with an indent per level. */
@@ -302,7 +315,7 @@ export function portfolioAttention(d, entity, kind, settings = {}) {
     if (h.score > worstChild) worstChild = h.score;
     if (h.rag !== "Green") needy++;
   });
-  if (needy) reasons.push(`${needy} of ${kids.length} sub-project${kids.length > 1 ? "s" : ""} need${needy === 1 ? "s" : ""} attention`);
+  if (needy) reasons.push(`${needy} of ${kids.length} workstream${kids.length > 1 ? "s" : ""} need${needy === 1 ? "s" : ""} attention`);
   score = Math.max(score, worstChild);
 
   const rag = entity.ragOverride || (score >= 45 ? "Red" : score >= 20 ? "Amber" : "Green");
@@ -463,7 +476,24 @@ export function migrate(d) {
      strand a project out of every list. Cut the link rather than lose it. */
   d.projects.forEach((p) => {
     if (!p.parentId) return;
-    if (!d.projects.some((x) => x.id === p.parentId) || !canParent(d, p.id, p.parentId)) { p.parentId = ""; changed = true; }
+    if (!d.projects.some((x) => x.id === p.parentId)) { p.parentId = ""; changed = true; }
+  });
+  /* Anything stored deeper than two levels is lifted to its top-level
+     ancestor rather than dropped. A grandchild becomes a workstream of the
+     umbrella it already belonged to, which is where it was meant to be. */
+  const topAncestor = (p, hops = 0) => {
+    const parent = p.parentId ? d.projects.find((x) => x.id === p.parentId) : null;
+    if (!parent || hops > 20) return p;
+    return topAncestor(parent, hops + 1);
+  };
+  d.projects.forEach((p) => {
+    if (!p.parentId) return;
+    const parent = d.projects.find((x) => x.id === p.parentId);
+    if (parent && parent.parentId) {
+      const top = topAncestor(parent);
+      p.parentId = top.id === p.id ? "" : top.id;   // a cycle resolves to standalone
+      changed = true;
+    }
   });
   d.mobs.forEach((m) => {
     if (remap(m, "stage", LEGACY_MOB_STAGES)) changed = true;

@@ -80,7 +80,7 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
           <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> Include closed
         </label>
         <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}>
-          <input type="checkbox" checked={showSubs} onChange={(e) => setShowSubs(e.target.checked)} /> List sub-projects separately
+          <input type="checkbox" checked={showSubs} onChange={(e) => setShowSubs(e.target.checked)} /> List workstreams separately
         </label>
       </div>
 
@@ -97,7 +97,7 @@ export default function Portfolio({ data, openProject, openMob, openItem, newPro
                 <span className="chip">{k === "mob" ? "Mobilisation" : "Project"}</span>
                 <span className="chip">{e.stage}</span>
                 {e.blocked && <span className="chip blocked">blocked</span>}
-                {h.children > 0 && <span className="chip sub">{h.children} sub-project{h.children > 1 ? "s" : ""}{h.needyChildren ? ` · ${h.needyChildren} need attention` : ""}</span>}
+                {h.children > 0 && <span className="chip sub">{h.children} workstream{h.children > 1 ? "s" : ""}{h.needyChildren ? ` · ${h.needyChildren} need attention` : ""}</span>}
                 {k === "project" && !isTopLevel(data, e) && <span className="chip">under {(data.projects.find((x) => x.id === e.parentId) || {}).name}</span>}
                 {ctxNames(data, e.contexts).map((c) => <span key={c} className="chip ctx">{c}</span>)}
               </div>

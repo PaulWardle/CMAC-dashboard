@@ -175,6 +175,16 @@ P("Every strand is a descendant", descendantIds(hd, "umb").size === 3);
 
 /* Cycles: the picker must refuse them, and a stored one must not hang. */
 P("A project cannot be its own parent", canParent(hd, "umb", "umb") === false);
+/* Two levels, deliberately: a workstream cannot have workstreams. */
+P("A workstream cannot be given workstreams of its own", canParent(hd, "solo", "s1") === false);
+P("A project that already has workstreams cannot be nested", canParent(hd, "umb", "solo") === false);
+P("Depth beyond two is flattened to the top-level ancestor, not dropped", (() => {
+  const deep = JSON.parse(JSON.stringify(hd));
+  deep.projects.push({ id: "gc", name: "Driver app changes", parentId: "s1", stage: "Delivery", rag: "",
+    ragOverride: "", progress: 0, owner: "", target: "", updatedAt: todayISO(), contexts: [], checklist: [] });
+  const out = migrate(deep).data;
+  return out.projects.find((x) => x.id === "gc").parentId === "umb";
+})());
 P("A parent cannot be moved under its own child", canParent(hd, "umb", "s1") === false);
 P("An unrelated project is a valid parent", canParent(hd, "solo", "umb") === true);
 P("A stored cycle is cut rather than left to hang", (() => {
@@ -193,8 +203,8 @@ P("A parent that no longer exists is cleared", (() => {
 const uh = portfolioAttention(hd, proj("umb"), "project", hd.settings);
 P("A strand's open work counts as the umbrella's", uh.open === 2, uh.open + " items across the tree");
 P("A strand's overdue work reaches the umbrella", uh.overdue === 1);
-P("The umbrella reports how many strands need attention",
-  uh.reasons.some((r) => /sub-project/.test(r)), uh.reasons.join("; "));
+P("The umbrella reports how many workstreams need attention",
+  uh.reasons.some((r) => /workstream/.test(r)), uh.reasons.join("; "));
 P("An umbrella is never greener than its worst strand",
   uh.score >= portfolioAttention(hd, proj("s2"), "project", hd.settings).score);
 P("A strand answers only for itself",

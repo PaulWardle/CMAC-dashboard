@@ -393,7 +393,7 @@ export default function Capture({ data, mutate, openItem }) {
 /* A group of proposals: collapsible, tick-all, and compact rows. The old
    screen showed ten dropdowns per record; almost all of them were blank
    and none of them were the thing being decided. */
-function Group({ title, items, set, render, hint }) {
+export function Group({ title, items, set, render, hint }) {
   const [open, setOpen] = useState(true);
   if (!items.length) return null;
   const sel = items.filter((x) => x._sel).length;
