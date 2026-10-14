@@ -14,7 +14,7 @@
    code that builds those outputs, not by remembering.
    ============================================================ */
 import React, { useState, useMemo } from "react";
-import { F, Empty, Badge, Rag, askConfirm, askInfo, copyText, fmtD } from "../ui";
+import { F, Empty, Badge, Rag, askConfirm, askInfo, copyText, fmtD, AutoTa, ContextPicker } from "../ui";
 import {
   RELATIONSHIPS, personLoad, ctxNames, uid, todayISO, daysSince, daysUntil,
   isOverdue, prioRank, portfolioAttention, lastReport, childProjects,
@@ -211,13 +211,8 @@ function PersonPage({ data, person, mutate, openItem, openProject, back }) {
           <F label="1:1 cadence"><input className="input" value={person.oneToOne} onChange={(e) => set("oneToOne", e.target.value)} placeholder="e.g. fortnightly, Tuesdays" /></F>
           <F label="Next 1:1"><input type="date" className="input" value={person.nextOneToOne} onChange={(e) => set("nextOneToOne", e.target.value)} /></F>
           <F label="Operational contexts" span>
-            <div className="ctxpick">
-              {data.contexts.filter((c) => c.active).map((c) => (
-                <button key={c.id} type="button" className={"ctxtag" + ((person.contexts || []).includes(c.id) ? " on" : "")}
-                  onClick={() => edit((p) => { p.contexts = (p.contexts || []).includes(c.id) ? p.contexts.filter((x) => x !== c.id) : [...(p.contexts || []), c.id]; }, "Contexts updated")}>
-                  {c.name}<i>{c.type}</i>
-                </button>))}
-            </div>
+            <ContextPicker contexts={data.contexts.filter((c) => c.active)} selected={person.contexts}
+              onToggle={(id) => edit((p) => { p.contexts = (p.contexts || []).includes(id) ? p.contexts.filter((x) => x !== id) : [...(p.contexts || []), id]; }, "Contexts updated")} />
           </F>
           <div style={{ gridColumn: "1 / -1" }}>
             <button className="btn danger sm" onClick={async () => {
@@ -265,11 +260,11 @@ function Development({ data, person, edit, set }) {
       </div>
 
       <div className="h2">Strengths</div>
-      <textarea className="ta" rows={3} value={person.strengths} onChange={(e) => set("strengths", e.target.value)}
+      <AutoTa minRows={2} value={person.strengths} onChange={(e) => set("strengths", e.target.value)}
         placeholder="What they are genuinely good at — the things you would put them on." />
 
       <div className="h2">Development</div>
-      <textarea className="ta" rows={3} value={person.development} onChange={(e) => set("development", e.target.value)}
+      <AutoTa minRows={2} value={person.development} onChange={(e) => set("development", e.target.value)}
         placeholder="Where they need to grow, and what would help." />
 
       <div className="h2">Leadership notes</div>
@@ -303,8 +298,8 @@ function Development({ data, person, edit, set }) {
         <div className="frow">
           <F label="Period"><input className="input" value={pdr.period} onChange={(e) => setPdr({ ...pdr, period: e.target.value })} placeholder="e.g. 2026 mid-year" /></F>
           <F label="Rating / outcome"><input className="input" value={pdr.rating} onChange={(e) => setPdr({ ...pdr, rating: e.target.value })} /></F>
-          <F label="Objectives" span><textarea className="ta" rows={2} value={pdr.objectives} onChange={(e) => setPdr({ ...pdr, objectives: e.target.value })} /></F>
-          <F label="Notes" span><textarea className="ta" rows={3} value={pdr.notes} onChange={(e) => setPdr({ ...pdr, notes: e.target.value })} /></F>
+          <F label="Objectives" span><AutoTa value={pdr.objectives} onChange={(e) => setPdr({ ...pdr, objectives: e.target.value })} /></F>
+          <F label="Notes" span><AutoTa value={pdr.notes} onChange={(e) => setPdr({ ...pdr, notes: e.target.value })} /></F>
         </div>
         <button className="btn pri sm" style={{ marginTop: 8 }} disabled={!pdr.period.trim()} onClick={addPdr}>Add PDR record</button>
       </div>

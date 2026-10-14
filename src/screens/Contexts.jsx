@@ -64,12 +64,19 @@ export default function Contexts({ data, mutate, openItem, openProject, openMob 
 
       <div className="h2">Retire a context</div>
       <p className="sub">Retiring hides a context from the pickers. Nothing tagged with it is lost, and it still appears on records that already carry it.</p>
-      <div className="ctxpick">
-        {data.contexts.map((c) => (
-          <button key={c.id} className={"ctxtag" + (c.active ? " on" : "")} onClick={async () => {
-            if (c.active && !(await askConfirm(`Retire "${c.name}"? It stays on the ${counts(c)} record(s) that use it.`))) return;
-            mutate((d) => { const x = d.contexts.find((y) => y.id === c.id); if (x) x.active = !x.active; return d; }, (c.active ? "Retired " : "Restored ") + c.name);
-          }}>{c.name}<i>{c.active ? "active" : "retired"}</i></button>))}
+      <div className="ctxgroups">
+        {CONTEXT_TYPES.map((t) => data.contexts.filter((c) => c.type === t)).filter((g) => g.length).map((g) => (
+          <div key={g[0].type} className="ctxgroup">
+            <span className="ctxtype">{g[0].type}</span>
+            <div className="ctxrow">
+              {g.map((c) => (
+                <button key={c.id} className={"ctag" + (c.active ? " on" : "")} title={c.active ? "Active — click to retire" : "Retired — click to restore"}
+                  onClick={async () => {
+                    if (c.active && !(await askConfirm(`Retire "${c.name}"? It stays on the ${counts(c)} record(s) that use it.`))) return;
+                    mutate((d) => { const x = d.contexts.find((y) => y.id === c.id); if (x) x.active = !x.active; return d; }, (c.active ? "Retired " : "Restored ") + c.name);
+                  }}>{c.name}</button>))}
+            </div>
+          </div>))}
       </div>
     </div>
   );
@@ -127,7 +134,7 @@ function ContextPage({ data, ctx, back, openItem, openProject, openMob }) {
 
       <div className="h2">People ({r.people.length})</div>
       {!r.people.length && <div className="sub">Nobody is tagged with this context yet.</div>}
-      <div className="ctxpick">{r.people.map((p) => <span key={p.id} className="chip">{p.name}{p.role ? ` · ${p.role}` : ""}</span>)}</div>
+      <div className="ctxrow">{r.people.map((p) => <span key={p.id} className="chip">{p.name}{p.role ? ` · ${p.role}` : ""}</span>)}</div>
 
       {r.meetings.length > 0 && <>
         <div className="h2">Recent meetings</div>

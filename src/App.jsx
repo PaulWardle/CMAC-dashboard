@@ -15,7 +15,7 @@ import Okrs from "./screens/Okrs";
 import Meetings from "./screens/Meetings";
 import {
   Badge, Rag, Stat, F, Empty, useSortable, copyText, downloadFile, toCSV, fmtD,
-  registerAsk, askConfirm, askPrompt, askInfo, useEscape, AskDialog,
+  registerAsk, askConfirm, askPrompt, askInfo, useEscape, AskDialog, AutoTa, ContextPicker,
 } from "./ui";
 import {
   STATUSES, OPEN_STATUSES, LEGACY_STATUS, MODES, PRIORITIES, PRIO_LABEL, PRIO_HINT, LEGACY_PRIORITY,
@@ -179,6 +179,8 @@ const STYLES = `
 .ta { resize:vertical; min-height:60px; }
 .frow { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px 12px; }
 .flab { font-size:9.5px; text-transform:uppercase; letter-spacing:1.1px; color:#5C6675; display:block; margin:0 0 3px; font-weight:800; }
+.flabrow { display:flex; align-items:center; gap:7px; margin:0 0 3px; }
+.flabrow .flab { margin:0; }
 .badge { display:inline-block; font-size:10px; font-weight:800; padding:1px 9px; border-radius:999px; border:1px solid transparent; white-space:nowrap; letter-spacing:.2px; }
 .bg-crit { background:#FD0E33; color:#fff; }
 .bg-high { background:#FDEBD3; color:#8A4B04; border-color:#EBCA9B; }
@@ -250,20 +252,17 @@ const STYLES = `
 .chip.blocked { background:#FDE7EB; border-color:#F6C9D2; color:#C01030; }
 /* A quiet icon in the app's own palette, not a coloured pill shouting
    "AI". It sits beside a field and does nothing until asked. */
-.wand { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; background:#fff; border:1.5px solid #DCE3E8; border-radius:8px; color:#5C6675; cursor:pointer; font-family:inherit; vertical-align:middle; }
+.wand { display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; padding:0; background:#fff; border:1.5px solid #DCE3E8; border-radius:6px; color:#8A93A0; cursor:pointer; font-family:inherit; flex:none; }
 .wand:hover:not(:disabled) { border-color:#112138; color:#FD0E33; }
 .wand:active:not(:disabled) { transform:scale(.94); }
 .wand:disabled { opacity:.35; cursor:default; }
 .wand.busy { color:#FD0E33; border-color:#F3C2CB; }
 .wand.busy svg { animation:wandpulse 1s ease-in-out infinite; }
 @keyframes wandpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
-.fieldwand { position:relative; }
-.fieldwand > .wand { position:absolute; top:6px; right:6px; z-index:2; }
-.fieldwand > .ta { padding-right:40px; }
 .wandout { background:#fff; border:1px solid #E1E7EC; border-left:3px solid #112138; border-radius:10px; padding:10px 12px; margin-top:8px; }
 .quickadd { display:flex; gap:6px; margin:8px 0; }
-.quickadd .input { flex:1; }
-.quickadd .select { width:auto; min-width:110px; }
+.quickadd .qa-title { flex:1 1 auto; }
+.quickadd .qa-who { flex:0 0 132px; width:132px; }
 .kbody .quickadd { margin:4px 0 0; }
 .kbody .quickadd .input { font-size:11.5px; padding:4px 8px; background:transparent; border-style:dashed; }
 .kbody .quickadd .input:focus { background:#fff; border-style:solid; }
@@ -349,6 +348,14 @@ const STYLES = `
 .savebar { position:sticky; bottom:0; background:linear-gradient(to top,#EDF1F2 65%,rgba(237,241,242,0)); padding:12px 0 6px; display:flex; gap:8px; margin-top:10px; }
 .emptyst { background:#fff; border:1px dashed #C7CFD8; border-radius:12px; padding:18px 16px; font-size:12.5px; color:#5C6675; text-align:center; }
 
+.ctxgroups { display:flex; flex-direction:column; gap:7px; }
+.ctxgroup { display:flex; align-items:baseline; gap:10px; }
+.ctxtype { font-size:8.5px; text-transform:uppercase; letter-spacing:1.1px; font-weight:800; color:#8A93A0; min-width:66px; flex:none; padding-top:3px; }
+.ctxrow { display:flex; flex-wrap:wrap; gap:4px; flex:1; }
+.ctag { background:#fff; border:1.5px solid #DCE3E8; border-radius:999px; padding:2px 11px; font-size:11.5px; font-weight:600; color:#5C6675; cursor:pointer; font-family:inherit; }
+.ctag:hover { border-color:#1D5FBF; color:#112138; }
+.ctag.on { background:#1D5FBF; border-color:#1D5FBF; color:#fff; font-weight:700; }
+.autota { resize:none; overflow-y:auto; min-height:0; }
 .ctxpick { display:flex; flex-wrap:wrap; gap:6px; }
 .ctxtag { display:inline-flex; align-items:baseline; gap:6px; background:#fff; border:1.5px solid #DCE3E8; border-radius:999px; padding:3px 11px; font-size:11.5px; font-weight:700; color:#5C6675; cursor:pointer; font-family:inherit; }
 .ctxtag:hover { border-color:#1D5FBF; color:#112138; }
@@ -453,10 +460,10 @@ function QuickAdd({ data, mutate, preset, placeholder, people }) {
   };
   return (
     <div className="quickadd">
-      <input className="input" value={t} placeholder={placeholder || "Add a task — type it and press Enter"}
+      <input className="input qa-title" value={t} placeholder={placeholder || "Add a task — type it and press Enter"}
         onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
       {people && <>
-        <input className="input" style={{ width: 170 }} list="quickadd-who" value={who} placeholder="Mine — or whose?"
+        <input className="input qa-who" list="quickadd-who" value={who} placeholder="Owner"
           onChange={(e) => setWho(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
         {/* Everyone the workspace has ever named: People, plus any owner or
             waiting-on already in use, so departments and one-off names come
@@ -646,7 +653,7 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
           <F label="Due date"><input type="date" className="input" value={w.due} onChange={(e) => set("due", e.target.value)} /></F>
           <F label="Project"><select className="select" value={w.project} onChange={(e) => set("project", e.target.value)}><option value="">—</option>{projectOptions(data)}</select></F>
           <F label="Mobilisation"><select className="select" value={w.mob} onChange={(e) => set("mob", e.target.value)}><option value="">—</option>{data.mobs.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></F>
-          <F label="Description" span><textarea className="ta" value={w.description} onChange={(e) => set("description", e.target.value)} /></F>
+          <F label="Description" span><AutoTa value={w.description} onChange={(e) => set("description", e.target.value)} placeholder="Anything needed to do it that the title does not carry." /></F>
           <F label="Next action" span><input className="input" value={w.nextAction} onChange={(e) => set("nextAction", e.target.value)} placeholder="The very next physical step" /></F>
           {more && <>
             <F label="Estimate (mins)"><input className="input" type="number" min="0" step="15" value={w.estimate || ""} onChange={(e) => set("estimate", e.target.value)} placeholder="optional" /></F>
@@ -658,18 +665,13 @@ function WorkItemModal({ data, item, onSave, onDelete, onClose }) {
             <F label="Last chased"><input type="date" className="input" value={w.lastChased} onChange={(e) => set("lastChased", e.target.value)} /></F>
             <F label="Next chase"><input type="date" className="input" value={w.nextChase} onChange={(e) => set("nextChase", e.target.value)} /></F>
           </>}
-          {w.status === "Done" && <F label="Outcome delivered" span><textarea className="ta" value={w.outcome} onChange={(e) => set("outcome", e.target.value)} placeholder="What was actually delivered / the benefit" /></F>}
+          {w.status === "Done" && <F label="Outcome delivered" span><AutoTa value={w.outcome} onChange={(e) => set("outcome", e.target.value)} placeholder="What was actually delivered, and the benefit." /></F>}
         </div>
         {/* Operational contexts. One item, several lenses — a Spain / Ryanair
             / Supply review is tagged three times and filed once. */}
         <div className="h2">Operational contexts</div>
-        <div className="ctxpick">
-          {data.contexts.filter((c) => c.active || (w.contexts || []).includes(c.id)).map((c) => (
-            <button key={c.id} type="button" className={"ctxtag" + ((w.contexts || []).includes(c.id) ? " on" : "")} onClick={() => toggleCtx(c.id)}>
-              {c.name}<i>{c.type}</i>
-            </button>))}
-          {!data.contexts.length && <span className="sub" style={{ margin: 0 }}>None set up yet — add them under Operational Contexts.</span>}
-        </div>
+        <ContextPicker contexts={data.contexts.filter((c) => c.active || (w.contexts || []).includes(c.id))}
+          selected={w.contexts} onToggle={toggleCtx} />
 
         {/* Subtasks: the checklist under a chunky item, which is how most
             real work actually arrives. */}
@@ -1374,18 +1376,14 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
             </select></F>
           <F label="Confidence"><select className="select" value={p.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Operational contexts" span>
-            <div className="ctxpick">
-              {data.contexts.filter((c) => c.active || (p.contexts || []).includes(c.id)).map((c) => (
-                <button key={c.id} type="button" className={"ctxtag" + ((p.contexts || []).includes(c.id) ? " on" : "")}
-                  onClick={() => set("contexts", (p.contexts || []).includes(c.id) ? p.contexts.filter((x) => x !== c.id) : [...(p.contexts || []), c.id])}>
-                  {c.name}<i>{c.type}</i></button>))}
-            </div></F>
+            <ContextPicker contexts={data.contexts.filter((c) => c.active || (p.contexts || []).includes(c.id))} selected={p.contexts}
+              onToggle={(id) => set("contexts", (p.contexts || []).includes(id) ? p.contexts.filter((x) => x !== id) : [...(p.contexts || []), id])} /></F>
           <F label="Start"><input type="date" className="input" value={p.start} onChange={(e) => set("start", e.target.value)} /></F>
           <F label="Target date"><input type="date" className="input" value={p.target} onChange={(e) => set("target", e.target.value)} /></F>
           <F label="Forecast completion"><input type="date" className="input" value={p.forecast} onChange={(e) => set("forecast", e.target.value)} /></F>
           <F label="Progress — counted, or left alone" span>
             <div className="frow">
-              <F label="What you are counting"><input className="input" value={p.measureLabel || ""} onChange={(e) => set("measureLabel", e.target.value)} placeholder="e.g. SOPs published" /></F>
+              <F label="What you are counting"><input className="input" value={p.measureLabel || ""} onChange={(e) => set("measureLabel", e.target.value)} placeholder="what is being counted" /></F>
               <F label="Done"><input className="input" type="number" value={p.measureCurrent} onChange={(e) => setP((x) => {
                 const cur = e.target.value, tgt = Number(x.measureTarget);
                 return { ...x, measureCurrent: cur, progress: tgt > 0 ? Math.round(Math.min(100, (Number(cur) / tgt) * 100)) : 0, progressAt: todayISO() };
@@ -1394,7 +1392,7 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
                 const tgt = e.target.value, cur = Number(x.measureCurrent);
                 return { ...x, measureTarget: tgt, progress: Number(tgt) > 0 ? Math.round(Math.min(100, (cur / Number(tgt)) * 100)) : 0, progressAt: todayISO() };
               })} /></F>
-              <F label="Whose figure"><input className="input" list="prog-basis" value={p.progressBasis || ""} onChange={(e) => set("progressBasis", e.target.value)} placeholder="e.g. Claire, 1:1" />
+              <F label="Whose figure"><input className="input" list="prog-basis" value={p.progressBasis || ""} onChange={(e) => set("progressBasis", e.target.value)} placeholder="who reported it" />
                 <datalist id="prog-basis"><option value="My estimate" />{data.people.map((x) => <option key={x.id} value={x.name} />)}</datalist></F>
             </div>
             <div className="sub" style={{ margin: "4px 0 0" }}>
@@ -1405,14 +1403,16 @@ function ProjectModal({ data, proj, onSave, onClose, onDelete }) {
                   : "Leave this blank unless there is something real to count. The stage already says where the work has got to."}
             </div>
           </F>
-          <F label="Objective" span><div className="fieldwand">
-            <textarea className="ta" value={p.objective} onChange={(e) => set("objective", e.target.value)} />
-            <Wand data={data} project={p} kind="objective" text={p.objective} onUse={(t) => set("objective", t)} />
-          </div></F>
-          <F label="Current position" span><div className="fieldwand">
-            <textarea className="ta" value={p.position} onChange={(e) => set("position", e.target.value)} />
-            <Wand data={data} project={p} kind="position" text={p.position} onUse={(t) => set("position", t)} />
-          </div></F>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Wand label="Objective" data={data} project={p} kind="objective" text={p.objective} onUse={(t) => set("objective", t)}>
+              <AutoTa value={p.objective} onChange={(e) => set("objective", e.target.value)} placeholder="What this work is for, and what will have changed when it is done." />
+            </Wand>
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Wand label="Current position" data={data} project={p} kind="position" text={p.position} onUse={(t) => set("position", t)}>
+              <AutoTa value={p.position} onChange={(e) => set("position", e.target.value)} placeholder="Where it actually stands today." />
+            </Wand>
+          </div>
           <F label="Held up?" span>
             <label className="checkline" style={{ padding: 0 }}>
               <input type="checkbox" checked={!!p.blocked} onChange={(e) => set("blocked", e.target.checked)} />
@@ -1521,11 +1521,7 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           <div className="card">
             <div className="flab">Objective</div><div style={{ marginBottom: 8 }}>{p.objective || "—"}</div>
             <div className="flab">Current position</div>
-            <div className="fieldwand" style={{ marginBottom: 10 }}>
-              <div style={{ paddingRight: 34, minHeight: 18 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
-              <Wand data={data} project={p} kind="position" text={p.position}
-                onUse={(t) => mutate((d) => { const x = d.projects.find((y) => y.id === p.id); if (x) { x.position = t; x.updatedAt = todayISO(); } return d; }, "Position updated: " + p.name)} />
-            </div>
+            <div style={{ marginBottom: 10, minHeight: 18 }}>{p.position || <span style={{ color: "#B45309" }}>No current position recorded.</span>}</div>
             <div style={{ display: "flex", gap: 16, fontSize: 12.5, flexWrap: "wrap" }}>
               <span><span className="flab">Owner</span>{p.owner || "—"}</span>
               <span><span className="flab">Sponsor</span>{p.sponsor || "—"}</span>
@@ -1603,11 +1599,10 @@ function Projects({ data, mutate, openItem, newItem, detail, setDetail, back, st
           </div>)}
         <div className="h2">Add update</div>
         <div className="card">
-          <div className="fieldwand">
-            <textarea className="ta" rows={2} value={updText} onChange={(e) => setUpdText(e.target.value)}
-              placeholder="Dump it however it comes out — the wand tidies it into something you could send." />
-            <Wand data={data} project={p} kind="update" text={updText} onUse={setUpdText} />
-          </div>
+          <Wand label="Your words" data={data} project={p} kind="update" text={updText} onUse={setUpdText}>
+            <AutoTa value={updText} onChange={(e) => setUpdText(e.target.value)}
+              placeholder="What moved, where it stands, what is next." />
+          </Wand>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button className="btn pri" onClick={addUpdate} disabled={!updText.trim()}>Add update</button>
           </div>
@@ -1653,16 +1648,12 @@ function MobModal({ data, mob, onSave, onClose, onDelete }) {
               {RAGS.map((s) => <option key={s}>{s}</option>)}
             </select></F>
           <F label="Operational contexts" span>
-            <div className="ctxpick">
-              {data.contexts.filter((c) => c.active || (m.contexts || []).includes(c.id)).map((c) => (
-                <button key={c.id} type="button" className={"ctxtag" + ((m.contexts || []).includes(c.id) ? " on" : "")}
-                  onClick={() => set("contexts", (m.contexts || []).includes(c.id) ? m.contexts.filter((x) => x !== c.id) : [...(m.contexts || []), c.id])}>
-                  {c.name}<i>{c.type}</i></button>))}
-            </div></F>
+            <ContextPicker contexts={data.contexts.filter((c) => c.active || (m.contexts || []).includes(c.id))} selected={m.contexts}
+              onToggle={(id) => set("contexts", (m.contexts || []).includes(id) ? m.contexts.filter((x) => x !== id) : [...(m.contexts || []), id])} /></F>
           <F label="Confidence"><select className="select" value={m.confidence} onChange={(e) => set("confidence", e.target.value)}>{["High", "Medium", "Low"].map((s) => <option key={s}>{s}</option>)}</select></F>
           <F label="Go-live date"><input type="date" className="input" value={m.goLive} onChange={(e) => set("goLive", e.target.value)} /></F>
           <F label="Hypercare ends"><input type="date" className="input" value={m.hypercareEnd} onChange={(e) => set("hypercareEnd", e.target.value)} /></F>
-          <F label="Current position" span><textarea className="ta" value={m.position || ""} onChange={(e) => set("position", e.target.value)} /></F>
+          <F label="Current position" span><AutoTa value={m.position || ""} onChange={(e) => set("position", e.target.value)} placeholder="Where it actually stands today." /></F>
           <F label="Held up?" span>
             <label className="checkline" style={{ padding: 0 }}>
               <input type="checkbox" checked={!!m.blocked} onChange={(e) => set("blocked", e.target.checked)} />
@@ -1777,7 +1768,7 @@ function Mobilisations({ data, mutate, openItem, newItem, detail, setDetail, bac
             : <div className="warnbox">Readiness {r.pct}% — {signOffs.filter((c) => !c.signedOff).length} sign-off(s) outstanding. A go/no-go can still be recorded, with conditions.</div>}
           <div className="card">
             <div className="frow">
-              <F label="Recommendation" span><textarea className="ta" value={m.golive?.recommendation || ""} onChange={(e) => touchMob(m.id, (x) => { x.golive.recommendation = e.target.value; }, null)} placeholder="Your recommendation to the decision owner, with rationale" /></F>
+              <F label="Recommendation" span><AutoTa value={m.golive?.recommendation || ""} onChange={(e) => touchMob(m.id, (x) => { x.golive.recommendation = e.target.value; }, null)} placeholder="The recommendation to the decision owner, with the rationale." /></F>
               <F label="Decision"><select className="select" value={m.golive?.decision || ""} onChange={(e) => touchMob(m.id, (x) => { x.golive.decision = e.target.value; }, "Go-live decision recorded")}><option value="">— not yet decided —</option>{["Go", "No-go", "Conditional go", "Deferred"].map((s) => <option key={s}>{s}</option>)}</select></F>
               <F label="Decision owner"><input className="input" value={m.golive?.decisionOwner || ""} onChange={(e) => touchMob(m.id, (x) => { x.golive.decisionOwner = e.target.value; }, null)} /></F>
               <F label="Decision date"><input type="date" className="input" value={m.golive?.decisionDate || ""} onChange={(e) => touchMob(m.id, (x) => { x.golive.decisionDate = e.target.value; }, null)} /></F>
@@ -2340,7 +2331,7 @@ ${body}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "2px 0 8px" }}>
                 {prompts.map((p) => <span key={p} className="chip" style={{ fontSize: 10.5 }}>{p}</span>)}
               </div>)}
-            <textarea className="ta" rows={3} placeholder="Scribbles — rough bullets are fine; ✦ Tidy sharpens them into briefing lines…" value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
+            <AutoTa minRows={2} placeholder="Rough notes are fine — the wand turns them into briefing lines." value={draft.commentary[k] || ""} onChange={(e) => upd((x) => { x.commentary[k] = e.target.value; })} />
             {srcs.length === 0 && <div className="sub" style={{ marginTop: 6 }}>No suggested content — nothing flagged for this section yet.</div>}
             {srcs.map((s) => {
               const key = k + ":" + s.id;
@@ -2348,7 +2339,7 @@ ${body}
               return (
                 <div key={key} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 0", borderTop: "1px solid #EDEFF2", opacity: excluded ? 0.45 : 1 }}>
                   <input type="checkbox" checked={!excluded} onChange={(e) => upd((x) => { x.excluded = e.target.checked ? x.excluded.filter((y) => y !== key) : [...x.excluded, key]; })} />
-                  <textarea className="ta" rows={1} style={{ minHeight: 30 }} value={draft.overrides[key] ?? s.text} onChange={(e) => upd((x) => { x.overrides[key] = e.target.value; })} />
+                  <AutoTa value={draft.overrides[key] ?? s.text} onChange={(e) => upd((x) => { x.overrides[key] = e.target.value; })} />
                   {draft.overrides[key] !== undefined && draft.overrides[key] !== s.text && <button className="btn sm" title="Revert to source wording" onClick={() => upd((x) => { delete x.overrides[key]; })}>↺</button>}
                 </div>);
             })}
@@ -2405,11 +2396,11 @@ function Newsletter({ data, mutate }) {
       {draft.articles.map((a, i) => (
         <div key={i} className="card" style={{ marginBottom: 8 }}>
           <input className="input" style={{ fontWeight: 600, marginBottom: 4 }} value={a.title} onChange={(e) => upd((x) => { x.articles[i].title = e.target.value; })} />
-          <textarea className="ta" value={a.body} onChange={(e) => upd((x) => { x.articles[i].body = e.target.value; })} />
+          <AutoTa minRows={2} value={a.body} onChange={(e) => upd((x) => { x.articles[i].body = e.target.value; })} />
           <button className="btn sm danger" style={{ marginTop: 6 }} onClick={() => upd((x) => { x.articles.splice(i, 1); })}>Remove</button>
         </div>))}
       <div className="card">
-        <textarea className="ta" placeholder="Write an article directly…" value={art} onChange={(e) => setArt(e.target.value)} />
+        <AutoTa minRows={2} placeholder="Write an article directly…" value={art} onChange={(e) => setArt(e.target.value)} />
         <button className="btn pri sm" style={{ marginTop: 6 }} disabled={!art.trim()} onClick={() => { upd((x) => { x.articles.push({ title: art.split("\n")[0].slice(0, 70), body: art }); }); setArt(""); }}>Add article</button>
       </div>
     </div>
@@ -2480,7 +2471,7 @@ function WeeklyReview({ data, mutate, go }) {
       <div className="card">
         {wr.topFive.map((t, i) => <input key={i} className="input" style={{ marginBottom: 6 }} placeholder={"Priority " + (i + 1)} value={t} onChange={(e) => upd((x) => { x.topFive[i] = e.target.value; })} />)}
         <label className="flab">Support or escalation needed</label>
-        <textarea className="ta" value={wr.support} onChange={(e) => upd((x) => { x.support = e.target.value; })} />
+        <AutoTa minRows={2} value={wr.support} onChange={(e) => upd((x) => { x.support = e.target.value; })} />
       </div>
     </div>
   );
@@ -2617,7 +2608,7 @@ function ContextPanel({ data, mutate }) {
         {fields.map(([k, l, ph]) => (
           <div key={k} style={{ marginBottom: 8 }}>
             <label className="flab">{l}</label>
-            <textarea className="ta" rows={k === "learned" ? 5 : 3} placeholder={ph} value={c[k] || ""} onChange={(e) => set(k, e.target.value)} />
+            <AutoTa minRows={2} placeholder={ph} value={c[k] || ""} onChange={(e) => set(k, e.target.value)} />
           </div>))}
       </div>
     </>
@@ -2766,12 +2757,8 @@ function Settings({ data, mutate, resetAll, auth, onTeamChange }) {
       <div className="card"><div className="frow">
         <F label="Your name / role"><input className="input" value={s.userName} onChange={(e) => set("userName", e.target.value)} /></F>
         <F label="Default contexts for new records" span>
-          <div className="ctxpick">
-            {data.contexts.filter((c) => c.active).map((c) => (
-              <button key={c.id} type="button" className={"ctxtag" + ((s.defaultContexts || []).includes(c.id) ? " on" : "")}
-                onClick={() => set("defaultContexts", (s.defaultContexts || []).includes(c.id) ? s.defaultContexts.filter((x) => x !== c.id) : [...(s.defaultContexts || []), c.id])}>
-                {c.name}<i>{c.type}</i></button>))}
-          </div></F>
+          <ContextPicker contexts={data.contexts.filter((c) => c.active)} selected={s.defaultContexts}
+            onToggle={(id) => set("defaultContexts", (s.defaultContexts || []).includes(id) ? s.defaultContexts.filter((x) => x !== id) : [...(s.defaultContexts || []), id])} /></F>
       </div></div>
       <div className="h2">Stale thresholds (days without an update before flagging)</div>
       <div className="card"><div className="frow">

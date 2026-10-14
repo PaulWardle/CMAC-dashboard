@@ -15,7 +15,7 @@
      - every created record carries its provenance.
    ============================================================ */
 import React, { useState, useRef } from "react";
-import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
+import { F, Empty, Badge, askConfirm, askInfo, fmtD, AutoTa } from "../ui";
 import { askClaude } from "../lib/claude";
 import { fileToCapture, ACCEPT, MAX_FILES } from "../lib/ingest";
 import {
@@ -261,7 +261,7 @@ export default function Capture({ data, mutate, openItem }) {
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}>
-        <textarea className="ta" rows={6} value={text} onChange={(e) => setText(e.target.value)} onPaste={onPaste}
+        <AutoTa minRows={2} maxRows={20} value={text} onChange={(e) => setText(e.target.value)} onPaste={onPaste}
           placeholder="Paste or type anything here, or drop files on this box — Outlook emails (.msg/.eml), Word, Excel, PDFs, screenshots." />
         {files.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>

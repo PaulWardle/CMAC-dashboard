@@ -350,7 +350,7 @@ await soft("A sub-project opens with its own updates and work items", async () =
   for (const section of ["Add update", "Work items"]) {
     if (!(await page.locator(".h2", { hasText: new RegExp("^" + section) }).count())) throw new Error("no " + section + " section");
   }
-  await page.locator('textarea[placeholder*="Dump it however"]').fill("Scoped the flow with Devs");
+  await page.locator('textarea[placeholder*="What moved, where it stands"]').fill("Scoped the flow with Devs");
   await page.locator('button:text-is("Add update")').first().click();
   await page.waitForTimeout(700);
   if (!(await page.locator("text=Scoped the flow with Devs").count())) throw new Error("the strand kept no update of its own");

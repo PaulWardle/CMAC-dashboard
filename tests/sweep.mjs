@@ -419,7 +419,7 @@ await soft("Creating lands straight on the new project, not a second list", asyn
   return true;
 });
 await soft("Project update posts", async () => {
-  const inp = page.locator('textarea[placeholder*="Dump it however"]');
+  const inp = page.locator('textarea[placeholder*="What moved, where it stands"]');
   await inp.fill("Kick-off completed, resourcing agreed");
   await page.locator('button:text-is("Add update")').first().click();
   await page.waitForTimeout(500);

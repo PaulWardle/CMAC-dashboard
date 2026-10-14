@@ -18,7 +18,7 @@
    ============================================================ */
 import React, { useState } from "react";
 import { askClaude } from "../lib/claude";
-import { fmtD } from "../ui";
+import { fmtD, AutoTa } from "../ui";
 import { childProjects, portfolioAttention, isOpen, isOverdue, todayISO } from "../lib/model";
 
 /* What the project actually holds, in the fewest words that still let a
@@ -63,7 +63,7 @@ const JOBS = {
   },
 };
 
-export default function Wand({ data, project, kind, text, onUse, compact }) {
+export default function Wand({ data, project, kind, text, onUse, label, children }) {
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState("");
   const [err, setErr] = useState("");
@@ -83,29 +83,41 @@ export default function Wand({ data, project, kind, text, onUse, compact }) {
     setBusy(false);
   };
 
-  return (
+  const button = (
+    <button type="button" className={"wand" + (busy ? " busy" : "")} disabled={busy || (!typed && !canBlank)}
+      aria-label={typed ? "Tidy what you have written" : job.empty}
+      title={typed ? "Tidy what you have written" : job.empty} onClick={run}>
+      <svg viewBox="0 0 18 18" width="12" height="12" fill="none" stroke="currentColor"
+        strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2.5 15.5 L10.5 7.5" />
+        <path d="M12.4 2.2 l0.8 2.0 2.0 0.8 -2.0 0.8 -0.8 2.0 -0.8 -2.0 -2.0 -0.8 2.0 -0.8 Z" fill="currentColor" stroke="none" />
+        <path d="M5.4 3.0 l0.45 1.15 1.15 0.45 -1.15 0.45 -0.45 1.15 -0.45 -1.15 -1.15 -0.45 1.15 -0.45 Z" fill="currentColor" stroke="none" />
+        <path d="M14.6 11.0 l0.4 1.0 1.0 0.4 -1.0 0.4 -0.4 1.0 -0.4 -1.0 -1.0 -0.4 1.0 -0.4 Z" fill="currentColor" stroke="none" />
+      </svg>
+    </button>);
+
+  /* The suggestion lands under the field, never over it — your own
+     words stay where you left them until you choose. */
+  const panel = (
     <>
-      <button type="button" className={"wand" + (busy ? " busy" : "")} disabled={busy || (!typed && !canBlank)}
-        aria-label={typed ? "Tidy what you have written" : job.empty}
-        title={typed ? "Tidy what you have written" : job.empty} onClick={run}>
-        <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor"
-          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M2.5 15.5 L10.5 7.5" />
-          <path d="M12.4 2.2 l0.8 2.0 2.0 0.8 -2.0 0.8 -0.8 2.0 -0.8 -2.0 -2.0 -0.8 2.0 -0.8 Z" fill="currentColor" stroke="none" />
-          <path d="M5.4 3.0 l0.45 1.15 1.15 0.45 -1.15 0.45 -0.45 1.15 -0.45 -1.15 -1.15 -0.45 1.15 -0.45 Z" fill="currentColor" stroke="none" />
-          <path d="M14.6 11.0 l0.4 1.0 1.0 0.4 -1.0 0.4 -0.4 1.0 -0.4 -1.0 -1.0 -0.4 1.0 -0.4 Z" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
       {err && <div className="warnbox" style={{ marginTop: 6 }}>{err}</div>}
       {out && (
         <div className="wandout">
           <div className="flab">Suggested — your own words are untouched until you choose</div>
-          <textarea className="ta" rows={4} value={out} onChange={(e) => setOut(e.target.value)} />
+          <AutoTa minRows={2} value={out} onChange={(e) => setOut(e.target.value)} />
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <button type="button" className="btn pri sm" onClick={() => { onUse(out); setOut(""); }}>Use this</button>
             <button type="button" className="btn sm" onClick={() => setOut("")}>Keep mine</button>
           </div>
         </div>)}
+    </>);
+
+  if (!children) return <>{button}{panel}</>;
+  return (
+    <>
+      <div className="flabrow"><label className="flab">{label}</label>{button}</div>
+      {children}
+      {panel}
     </>
   );
 }

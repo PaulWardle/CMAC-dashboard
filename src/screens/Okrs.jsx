@@ -11,7 +11,7 @@
    has not set stays blank rather than being guessed.
    ============================================================ */
 import React, { useState } from "react";
-import { F, Stat, Empty, Rag, askConfirm, fmtD } from "../ui";
+import { F, Stat, Empty, Rag, askConfirm, fmtD, AutoTa, ContextPicker } from "../ui";
 import { OKR_HEALTH, OKR_UNITS, okrHealth, okrProgress, uid, todayISO, daysUntil, ctxNames, isOpen } from "../lib/model";
 
 const HEALTH_RAG = { "On track": "Green", "At risk": "Amber", "Off track": "Red", "Completed": "Green", "Not started": "", "Cancelled": "" };
@@ -138,21 +138,17 @@ function OkrModal({ data, okr, onSave, onClose, onDelete }) {
               <option value="">Calculated — {okrHealth({ ...o, health: "" })}</option>
               {OKR_HEALTH.map((h) => <option key={h}>{h}</option>)}
             </select></F>
-          <F label="Commentary" span><textarea className="ta" rows={3} value={o.commentary} onChange={(e) => set("commentary", e.target.value)} placeholder="Why it sits where it does, and what happens next." /></F>
+          <F label="Commentary" span><AutoTa value={o.commentary} onChange={(e) => set("commentary", e.target.value)} placeholder="Why it sits where it does, and what happens next." /></F>
         </div>
 
         <div className="h2">Operational contexts</div>
-        <div className="ctxpick">
-          {data.contexts.filter((c) => c.active).map((c) => (
-            <button key={c.id} type="button" className={"ctxtag" + ((o.contexts || []).includes(c.id) ? " on" : "")}
-              onClick={() => set("contexts", (o.contexts || []).includes(c.id) ? o.contexts.filter((x) => x !== c.id) : [...(o.contexts || []), c.id])}>
-              {c.name}<i>{c.type}</i></button>))}
-        </div>
+        <ContextPicker contexts={data.contexts.filter((c) => c.active)} selected={o.contexts}
+          onToggle={(id) => set("contexts", (o.contexts || []).includes(id) ? o.contexts.filter((x) => x !== id) : [...(o.contexts || []), id])} />
 
         <div className="h2">Linked projects</div>
-        <div className="ctxpick">
+        <div className="ctxrow">
           {data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage)).map((p) => (
-            <button key={p.id} type="button" className={"ctxtag" + ((o.linked || []).includes(p.id) ? " on" : "")}
+            <button key={p.id} type="button" className={"ctag" + ((o.linked || []).includes(p.id) ? " on" : "")}
               onClick={() => set("linked", (o.linked || []).includes(p.id) ? o.linked.filter((x) => x !== p.id) : [...(o.linked || []), p.id])}>
               {p.name}</button>))}
           {!data.projects.length && <span className="sub" style={{ margin: 0 }}>No projects to link yet.</span>}

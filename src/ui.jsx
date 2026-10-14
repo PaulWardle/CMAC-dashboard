@@ -7,7 +7,7 @@
    anything about the data model beyond the priority labels.
    ============================================================ */
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { PRIO_LABEL, PRIO_HINT } from "./lib/model";
+import { PRIO_LABEL, PRIO_HINT, CONTEXT_TYPES } from "./lib/model";
 
 export const fmtD = (s) => { if (!s) return "—"; const p = String(s).slice(0, 10).split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
 
@@ -132,6 +132,53 @@ export function AskDialog({ req, onResolve }) {
           <button className="btn pri" autoFocus={!isPrompt} onClick={() => onResolve(isPrompt ? val : true)}>{isPrompt ? "Save" : isInfo ? "OK" : "Yes, continue"}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* A box that starts as one line and grows as you type. Most of what goes
+   into this app is a sentence; a six-row textarea sitting empty asks for an
+   essay and wastes the screen when it does not get one. */
+export function AutoTa({ value, onChange, minRows = 1, maxRows = 14, className = "ta", ...rest }) {
+  const ref = useRef(null);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 18;
+    const pad = el.offsetHeight - el.clientHeight + 12;
+    el.style.height = Math.min(Math.max(el.scrollHeight, minRows * line + pad), maxRows * line + pad) + "px";
+  };
+  useEffect(fit, [value]);
+  useEffect(() => {
+    const onResize = () => fit();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return <textarea ref={ref} className={className + " autota"} rows={minRows} value={value}
+    onChange={(e) => { onChange(e); fit(); }} onInput={fit} {...rest} />;
+}
+
+/* Operational contexts, grouped by what kind they are. Sixteen pills in one
+   wrapped block each repeating its own type label was a wall; the type is
+   said once per group instead. */
+export function ContextPicker({ contexts, selected, onToggle, compact }) {
+  const chosen = selected || [];
+  const groups = CONTEXT_TYPES
+    .map((type) => ({ type, items: contexts.filter((c) => c.type === type) }))
+    .filter((g) => g.items.length);
+  if (!groups.length) return <span className="sub" style={{ margin: 0 }}>None set up yet — add them under Operational Contexts.</span>;
+  return (
+    <div className={"ctxgroups" + (compact ? " compact" : "")}>
+      {groups.map(({ type, items }) => (
+        <div key={type} className="ctxgroup">
+          <span className="ctxtype">{type}</span>
+          <div className="ctxrow">
+            {items.map((c) => (
+              <button key={c.id} type="button" className={"ctag" + (chosen.includes(c.id) ? " on" : "")}
+                onClick={() => onToggle(c.id)}>{c.name}</button>))}
+          </div>
+        </div>))}
     </div>
   );
 }

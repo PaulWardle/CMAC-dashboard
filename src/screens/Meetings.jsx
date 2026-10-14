@@ -20,7 +20,7 @@
    answer.
    ============================================================ */
 import React, { useState, useMemo } from "react";
-import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
+import { F, Empty, Badge, askConfirm, askInfo, fmtD, AutoTa, ContextPicker } from "../ui";
 import { askClaude } from "../lib/claude";
 import {
   MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree,
@@ -259,7 +259,7 @@ ${meeting.notes}`;
       </div>
 
       <div className="h2">Who was there</div>
-      <div className="ctxpick">
+      <div className="ctxrow">
         {(meeting.people || []).map((n) => (
           <span key={n} className="chip">{n} <span className="linkish" onClick={() => set("people", meeting.people.filter((x) => x !== n))}>✕</span></span>))}
         <input className="input" style={{ width: 180 }} list="mtg-people" placeholder="Add someone… (Enter)" value={personDraft}
@@ -269,15 +269,11 @@ ${meeting.notes}`;
       </div>
 
       <div className="h2">Operational contexts</div>
-      <div className="ctxpick">
-        {data.contexts.filter((c) => c.active).map((c) => (
-          <button key={c.id} type="button" className={"ctxtag" + ((meeting.contexts || []).includes(c.id) ? " on" : "")}
-            onClick={() => set("contexts", (meeting.contexts || []).includes(c.id) ? meeting.contexts.filter((x) => x !== c.id) : [...(meeting.contexts || []), c.id])}>
-            {c.name}<i>{c.type}</i></button>))}
-      </div>
+      <ContextPicker contexts={data.contexts.filter((c) => c.active)} selected={meeting.contexts}
+        onToggle={(id) => set("contexts", (meeting.contexts || []).includes(id) ? meeting.contexts.filter((x) => x !== id) : [...(meeting.contexts || []), id])} />
 
       <div className="h2">Notes</div>
-      <textarea className="ta" rows={10} value={meeting.notes} onChange={(e) => set("notes", e.target.value)}
+      <AutoTa minRows={2} maxRows={24} value={meeting.notes} onChange={(e) => set("notes", e.target.value)}
         placeholder="Paste or type whatever you have — rough bullets are fine. This stays as the source record." />
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button className="btn pri" disabled={busy || !meeting.notes.trim()} onClick={process}>{busy ? "Reading the notes…" : "Structure these notes"}</button>
@@ -296,7 +292,7 @@ ${meeting.notes}`;
 
         {proposed.summary && <>
           <div className="flab" style={{ marginTop: 10 }}>Summary</div>
-          <textarea className="ta" rows={6} value={proposed.summary} onChange={(e) => setProposed({ ...proposed, summary: e.target.value })} />
+          <AutoTa minRows={2} value={proposed.summary} onChange={(e) => setProposed({ ...proposed, summary: e.target.value })} />
         </>}
 
         {proposed.decisions.length > 0 && <>
