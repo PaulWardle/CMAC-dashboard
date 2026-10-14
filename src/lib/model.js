@@ -62,7 +62,8 @@ export const SEED_CONTEXTS = [
   { name: "UK Operations", type: "Geography" },
   { name: "Spain", type: "Geography" },
   { name: "Portugal", type: "Geography" },
-  { name: "Greece & Cyprus", type: "Geography" },
+  { name: "Greece", type: "Geography" },
+  { name: "UK Aviation", type: "Geography" },
   { name: "Europe Operations", type: "Geography" },
   { name: "Group Operations", type: "Function" },
   { name: "Operations", type: "Function" },
@@ -80,7 +81,7 @@ export const SEED_CONTEXTS = [
    is the absence of a geography rather than one more. */
 const COUNTRY_TO_CONTEXT = {
   UK: "UK Operations", Spain: "Spain", Portugal: "Portugal",
-  Greece: "Greece & Cyprus", Group: "",
+  Greece: "Greece", Group: "",
 };
 
 export const TYPES = ["Action", "Task", "Milestone", "Risk", "Issue", "Dependency", "Decision", "Commitment", "Chaser", "Follow-up", "Idea", "Improvement", "Information request", "Meeting action", "Mobilisation action", "Board action", "Audit action"];

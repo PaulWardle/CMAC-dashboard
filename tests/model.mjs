@@ -53,7 +53,7 @@ P("Parked priority → P5", byId("c").priority === "P5");
 P("Contexts are seeded", m.contexts.length >= 8);
 const ctxId = (n) => (m.contexts.find((c) => c.name === n) || {}).id;
 P("Spain becomes an Operational Context tag", byId("a").contexts.includes(ctxId("Spain")));
-P("Greece maps to Greece & Cyprus", byId("e").contexts.includes(ctxId("Greece & Cyprus")));
+P("Greece maps to the Greece context", byId("e").contexts.includes(ctxId("Greece")));
 P("'Group' means no geography, not a ninth one", byId("b").contexts.length === 0);
 P("A project carries its context across too", m.projects[0].contexts.map((i) => m.contexts.find((c) => c.id === i).name).join(",") === "Operations", "Group → no geography, workstream → Operations");
 
