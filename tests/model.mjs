@@ -3,7 +3,7 @@
    against data that cannot be recovered if it gets it wrong. */
 import { migrate, isWaiting, isOpen, personLoad, okrHealth, itemAttention, portfolioAttention, dueBadge, subtaskProgress, todayISO,
   childProjects, parentProject, isTopLevel, canParent, projectTree, descendantIds,
-  inboxItems, waitingItems, meetingsToProcess,
+  inboxItems, waitingItems,
   PROJECT_STAGES, LEGACY_STAGES } from "../src/lib/model.js";
 
 let fails = 0;
@@ -228,9 +228,8 @@ const B = migrate({
   v: 3, settings: { displayName: "Paul Wardle" },
   contexts: [], people: [], okrs: [], sources: [], projects: [], mobs: [], updates: [], lessons: [],
   meetings: [
-    { id: "m1", title: "Processed", date: d(-2), type: "1:1", contexts: [], people: [], notes: "notes", summary: "", processed: true },
-    { id: "m2", title: "To do", date: d(-1), type: "1:1", contexts: [], people: [], notes: "notes", summary: "", processed: false },
-    { id: "m3", title: "Empty", date: d(-1), type: "1:1", contexts: [], people: [], notes: "", summary: "", processed: false },
+    { id: "m1", title: "Old one", date: d(-2), type: "1:1", contexts: [], people: [], notes: "notes", summary: "", processed: true },
+    { id: "m2", title: "Recent", date: d(-1), type: "1:1", contexts: [], people: [], notes: "notes", summary: "" },
   ],
   workItems: [
     { id: "w1", title: "Delivered ask", status: "Done", mode: "Waiting on", waitingOn: "Carlos", priority: "P2",
@@ -250,8 +249,8 @@ P("A delivered ask does not keep counting as waiting", waitingItems(B).length ==
 P("A cancelled ask does not count either", !waitingItems(B).some((w) => w.id === "w3"));
 P("The live one does", waitingItems(B).some((w) => w.id === "w2"));
 P("Inbox counts only what is genuinely unprocessed", inboxItems(B).length === 1);
-P("Meetings to process means notes that have not been turned into actions",
-  meetingsToProcess(B).length === 1 && meetingsToProcess(B)[0].id === "m2");
+P("The retired meeting 'processed' flag is cleared, and the notes survive",
+  B.meetings.every((m) => m.processed === undefined) && B.meetings.find((x) => x.id === "m1").notes === "notes");
 
 console.log("\n" + "=".repeat(54) + "\n" + (fails ? fails + " FAILED" : "all passed"));
 process.exit(fails ? 1 : 0);

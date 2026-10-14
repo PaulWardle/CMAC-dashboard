@@ -451,10 +451,25 @@ await soft("A meeting turns notes into actions that link back", async () => {
   return true;
 });
 
-await soft("A meeting is only marked processed after the records exist", async () => {
-  const chips = await page.locator(".chip", { hasText: "processed" }).count();
-  if (!chips) throw new Error("meeting not marked processed after approval");
+await soft("A meeting keeps its notes, with no processed state to chase", async () => {
+  if (await page.locator('.chip', { hasText: /^processed$/ }).count()) throw new Error("a processed chip is still being shown");
+  if (await page.locator('button:text-is("Mark unprocessed")').count()) throw new Error("the processed toggle is still there");
+  // The notes are still the record.
+  const notes = await page.locator("textarea").last().inputValue();
+  if (!/Porto/.test(notes)) throw new Error("the notes did not survive: " + notes.slice(0, 60));
   return true;
+});
+
+await soft("Nothing nags about meetings anywhere", async () => {
+  await go("Meetings");
+  const tabs = await page.locator(".vtab").allInnerTexts();
+  if (tabs.some((t) => /process/i.test(t))) throw new Error("a To-process tab survives: " + tabs.join("|"));
+  if (await page.locator(".warnbox", { hasText: /turned into actions/ }).count()) throw new Error("the unprocessed warning survives");
+  await go("Command Centre");
+  if (await page.locator(".stat", { hasText: /Meetings to process/ }).count()) throw new Error("the Command Centre tile survives");
+  const alerts = await page.locator(".alert-row").allInnerTexts();
+  if (alerts.some((t) => /not yet turned into actions/.test(t))) throw new Error("the alert survives");
+  return tabs.join(" · ");
 });
 
 /* ---------- sidebar badges tell the truth ---------- */

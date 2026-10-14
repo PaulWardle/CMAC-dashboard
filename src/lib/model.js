@@ -400,6 +400,14 @@ export function migrate(d) {
   if (!Array.isArray(d.meetings)) { d.meetings = []; changed = true; }
   if (!Array.isArray(d.sources)) { d.sources = []; changed = true; }
 
+  /* Meetings no longer carry a processed state. Notes are worth keeping
+     because they can be found again, not because something was extracted
+     from them, and a counter of "unhandled" meetings is a chore list for a
+     job nobody asked for. The notes themselves are untouched. */
+  (d.meetings || []).forEach((m) => {
+    if (m.processed !== undefined) { delete m.processed; changed = true; }
+  });
+
   /* Health stops being something typed in. A colour that was set by hand
      before this change is kept as the initial override — so nothing looks
      different on the first load — and clearing it hands the project back
@@ -637,7 +645,6 @@ export const personByName = (d, name) => d.people.find((p) => p.name.toLowerCase
    that predicate, defined once and used by both. */
 export const inboxItems = (d) => d.workItems.filter((w) => w.status === "Inbox" && !isArchived(w));
 export const waitingItems = (d) => d.workItems.filter((w) => isWaiting(w) && isOpen(w));
-export const meetingsToProcess = (d) => (d.meetings || []).filter((m) => !m.processed && m.notes);
 
 /* Everything filed under one context, across every collection. This is
    what makes "give me the current picture in Spain" a query rather than

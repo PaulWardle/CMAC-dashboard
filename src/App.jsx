@@ -22,7 +22,7 @@ import {
   RAGS, CONTEXT_TYPES, SEED_CONTEXTS, TYPES, CORE_TYPES,
   PROJECT_STAGES, LEGACY_STAGES, MOB_STAGES, LEGACY_MOB_STAGES,
   childProjects, parentProject, isTopLevel, isWorkstream, canParent, projectTree, descendantIds,
-  isSupervised, lastReport, inboxItems, waitingItems, meetingsToProcess,
+  isSupervised, lastReport, inboxItems, waitingItems,
   MOB_WORKSTREAMS, CONFIDENTIALITY, SHAREABLE, LEGACY_CONF, DECISION_STATUSES, LEGACY_DECISION,
   RELATIONSHIPS, MEETING_TYPES, OKR_HEALTH, OKR_UNITS,
   prioRank, prioText, isWaiting, isAction, isOpen, isArchived, subtaskProgress, dueBadge,
@@ -555,10 +555,6 @@ function computeAlerts(d) {
     const nx = daysUntil(p.nextOneToOne);
     if (nx !== null && nx >= 0 && nx <= 2 && l.waitingOnThem.length) push(1, `1:1 with ${p.name} in ${nx}d — ${l.waitingOnThem.length} open with them`, "people", p.id);
   });
-  /* Notes taken and never turned into anything are the most common way a
-     commitment made in a meeting quietly disappears. */
-  const unproc = (d.meetings || []).filter((m) => !m.processed && m.notes && daysSince(m.date) >= 2).length;
-  if (unproc) push(2, `${unproc} meeting${unproc > 1 ? "s have" : " has"} notes not yet turned into actions`, "meetings");
   (d.okrs || []).forEach((o) => {
     const h = okrHealth(o);
     if (h === "Off track") push(2, `Goal off track — ${o.objective}`, "okrs", o.id);
@@ -813,7 +809,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
   const top5 = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority)).slice(0, 5);
   const focused = open.filter((w) => w.focus).sort((a, b) => prioRank(a.priority) - prioRank(b.priority));
   const peopleHot = (data.people || []).filter((p) => personLoad(data, p).overdue.length > 0).length;
-  const toProcess = meetingsToProcess(data).length;
   const doneRecent = data.workItems.filter((w) => w.status === "Done" && daysSince(w.completed) <= 7);
   const activeProjects = data.projects.filter((p) => !["Closed", "Cancelled"].includes(p.stage));
   const ragCount = (r) => activeProjects.filter((p) => p.rag === r).length;
@@ -878,7 +873,6 @@ function CommandCentre({ data, mutate, openItem, go, openProject, openMob }) {
         <Stat n={decisions.length} l="Decisions open" onClick={() => go("decisions")} />
         <Stat n={stale.length} l={"Stale >" + data.settings.staleItem + "d"} tone={stale.length ? "warn" : ""} onClick={() => go("actions")} />
         <Stat n={peopleHot} l="People to chase" tone={peopleHot ? "warn" : ""} onClick={() => go("people")} />
-        <Stat n={toProcess} l="Meetings to process" tone={toProcess ? "warn" : ""} onClick={() => go("meetings")} />
       </div>
 
       {(() => {
@@ -2778,7 +2772,7 @@ function serialiseForAI(data) {
     return { name: p.name, role: p.role || undefined, relationship: p.relationship, waitingOnThem: l.waitingOnThem.length || undefined, overdue: l.overdue.length || undefined };
   });
   const goals = (data.okrs || []).map((o) => ({ objective: o.objective, measure: o.measure, baseline: o.baseline, current: o.current, target: o.target, deadline: o.deadline, health: okrHealth(o), owner: o.owner }));
-  const meetings = (data.meetings || []).slice(-25).map((m) => ({ title: m.title, date: m.date, type: m.type, people: (m.people || []).join(", ") || undefined, processed: m.processed, summary: lim(m.summary, 400) || undefined }));
+  const meetings = (data.meetings || []).slice(-25).map((m) => ({ title: m.title, date: m.date, type: m.type, people: (m.people || []).join(", ") || undefined, summary: lim(m.summary, 400) || undefined }));
   const contexts = data.contexts.filter((c) => c.active).map((c) => `${c.name} (${c.type})`);
   const ctx = data.context || {};
   const context = lim([ctx.org, ctx.people, ctx.clients, ctx.rules, ctx.learned].filter(Boolean).join("\n"), 4000) || undefined;

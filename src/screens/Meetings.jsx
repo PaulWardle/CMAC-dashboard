@@ -2,11 +2,14 @@
    Meetings and calendar.
 
    Recording is not available, so this is built around what IS: notes
-   pasted or typed after the fact. The workflow is deliberately
-   propose-then-approve:
+   pasted or typed after the fact.
 
-     notes → AI structures them → you review → approved items become
-     real records → only then is the meeting marked processed
+   There is no "processed" state and no queue of meetings waiting to be
+   dealt with. A counter telling you that four meetings are unhandled is
+   a chore list for a job nobody asked for; notes are worth keeping
+   because you can find them again, whether or not anything was ever
+   pulled out of them. Structuring them into actions is a button you
+   press when it would help.
 
    Two rules the AI is held to. It does not turn every "we should" into
    a task, and it does not assign an owner or a deadline that was not
@@ -20,7 +23,7 @@ import React, { useState, useMemo } from "react";
 import { F, Empty, Badge, askConfirm, askInfo, fmtD } from "../ui";
 import { askClaude } from "../lib/claude";
 import {
-  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree, meetingsToProcess,
+  MEETING_TYPES, PRIORITIES, TYPES, uid, todayISO, daysUntil, ctxNames, personByName, projectTree,
 } from "../lib/model";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -32,7 +35,6 @@ export default function Meetings({ data, mutate, openItem }) {
   const [sel, setSel] = useState(null);
 
   const meetings = data.meetings || [];
-  const unprocessed = meetingsToProcess(data);
 
   const create = (date) => {
     const id = uid();
@@ -40,7 +42,7 @@ export default function Meetings({ data, mutate, openItem }) {
       d.meetings = d.meetings || [];
       d.meetings.push({
         id, title: "", date: date || todayISO(), type: "Other", contexts: [], people: [],
-        project: "", mob: "", notes: "", summary: "", processed: false, created: todayISO(),
+        project: "", mob: "", notes: "", summary: "", created: todayISO(),
       });
       return d;
     }, "Meeting added");
@@ -59,16 +61,11 @@ export default function Meetings({ data, mutate, openItem }) {
         <h2 className="h1">Meetings</h2>
         <button className="btn pri sm" style={{ marginLeft: "auto" }} onClick={() => create()}>+ New meeting</button>
       </div>
-      <p className="sub">Put the notes somewhere they can be found again. Paste what you have, let it be structured into decisions and actions, approve what is right — and everything it creates keeps a link back to this meeting.</p>
-
-      {unprocessed.length > 0 && (
-        <div className="warnbox">{unprocessed.length} meeting{unprocessed.length > 1 ? "s have" : " has"} notes that have not been turned into actions yet.</div>)}
+      <p className="sub">Put the notes somewhere they can be found again. Pull actions and decisions out when it helps — everything created keeps a link back here — or just leave the notes as the record.</p>
 
       <div className="viewtabs">
-        {["Calendar", "List", "To process"].map((v) => (
-          <button key={v} className={"vtab" + (view === v ? " on" : "")} onClick={() => setView(v)}>
-            {v}{v === "To process" && <span>{unprocessed.length}</span>}
-          </button>))}
+        {["Calendar", "List"].map((v) => (
+          <button key={v} className={"vtab" + (view === v ? " on" : "")} onClick={() => setView(v)}>{v}</button>))}
       </div>
 
       {view === "Calendar" && <CalendarGrid data={data} cursor={cursor} setCursor={setCursor} onOpen={setSel} onAdd={create} />}
@@ -77,11 +74,6 @@ export default function Meetings({ data, mutate, openItem }) {
         meetings.length
           ? <MeetingList data={data} rows={[...meetings].sort((a, b) => (b.date || "").localeCompare(a.date || ""))} onOpen={setSel} />
           : <Empty>No meetings recorded. Add one and paste the notes in — even rough notes are worth far more in here than in a file you will not find again.</Empty>)}
-
-      {view === "To process" && (
-        unprocessed.length
-          ? <MeetingList data={data} rows={unprocessed} onOpen={setSel} />
-          : <Empty>Nothing waiting. Every meeting with notes has been turned into actions.</Empty>)}
     </div>
   );
 }
@@ -89,7 +81,7 @@ export default function Meetings({ data, mutate, openItem }) {
 function MeetingList({ data, rows, onOpen }) {
   return (
     <table className="tbl">
-      <thead><tr><th>Date</th><th>Meeting</th><th>Type</th><th>People</th><th>Context</th><th>State</th></tr></thead>
+      <thead><tr><th>Date</th><th>Meeting</th><th>Type</th><th>People</th><th>Context</th><th>Notes</th></tr></thead>
       <tbody>
         {rows.map((m) => (
           <tr key={m.id} onClick={() => onOpen(m.id)} style={{ cursor: "pointer" }}>
@@ -98,7 +90,7 @@ function MeetingList({ data, rows, onOpen }) {
             <td>{m.type}</td>
             <td>{(m.people || []).join(", ")}</td>
             <td>{ctxNames(data, m.contexts).join(", ")}</td>
-            <td>{m.processed ? <span className="chip">processed</span> : m.notes ? <span className="chip wait">to process</span> : <span className="chip">no notes</span>}</td>
+            <td>{m.notes ? <span className="chip">{m.notes.length > 400 ? "full notes" : "notes"}</span> : "—"}</td>
           </tr>))}
       </tbody>
     </table>
@@ -143,14 +135,14 @@ function CalendarGrid({ data, cursor, setCursor, onOpen, onAdd }) {
             <div key={date} className={"calcell" + (date === today ? " today" : "")} onDoubleClick={() => onAdd(date)}>
               <div className="caldate">{d}</div>
               {list.slice(0, 3).map((x) => (
-                <div key={x.id} className={"calev" + (x.processed ? "" : x.notes ? " unproc" : "")} onClick={() => onOpen(x.id)} title={x.title}>
+                <div key={x.id} className="calev" onClick={() => onOpen(x.id)} title={x.title}>
                   {x.title || "(untitled)"}
                 </div>))}
               {list.length > 3 && <div className="calmore">+{list.length - 3} more</div>}
             </div>);
         })}
       </div>
-      <p className="sub" style={{ marginTop: 8 }}>Double-click a day to add a meeting. An amber bar means notes are waiting to be turned into actions.</p>
+      <p className="sub" style={{ marginTop: 8 }}>Double-click a day to add a meeting.</p>
     </div>
   );
 }
@@ -205,9 +197,9 @@ ${meeting.notes}`;
     setBusy(false);
   };
 
-  /* Approve. The meeting is marked processed only once the records have
-     actually been written — a flag set before the work exists is a lie
-     that surfaces three weeks later. */
+  /* Approve. The notes stay exactly as they were; the records created
+     from them carry a link back, so "why does this task exist?" always
+     has an answer. */
   const approve = () => {
     const acts = proposed.actions.filter((a) => a._sel);
     const decs = proposed.decisions.filter((x) => x._sel);
@@ -240,9 +232,9 @@ ${meeting.notes}`;
       })));
       risks.forEach((x) => d.workItems.push(base({ title: x.text, type: "Risk", description: "Raised at " + src.label })));
       const m = d.meetings.find((x) => x.id === meeting.id);
-      if (m) { m.summary = proposed.summary || m.summary; m.processed = true; }
+      if (m) m.summary = proposed.summary || m.summary;
       return d;
-    }, `Meeting processed — ${acts.length} action(s), ${decs.length} decision(s), ${risks.length} risk(s)`);
+    }, `${meeting.title || "Meeting"} — ${acts.length} action(s), ${decs.length} decision(s), ${risks.length} risk(s)`);
     setProposed(null);
   };
 
@@ -289,8 +281,6 @@ ${meeting.notes}`;
         placeholder="Paste or type whatever you have — rough bullets are fine. This stays as the source record." />
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button className="btn pri" disabled={busy || !meeting.notes.trim()} onClick={process}>{busy ? "Reading the notes…" : "Structure these notes"}</button>
-        {meeting.processed && <span className="chip">processed</span>}
-        {meeting.processed && <button className="btn sm" onClick={() => set("processed", false)}>Mark unprocessed</button>}
         <span className="sub" style={{ margin: 0 }}>Nothing is saved as a record until you approve it.</span>
       </div>
       {err && <div className="warnbox" style={{ marginTop: 8 }}>{err}</div>}
